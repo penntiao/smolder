@@ -107,7 +107,14 @@ final class Monitor: ObservableObject {
         reconfigureNotifiers()
     }
 
+    /// Held for the app's lifetime. Without it App Nap throttles a windowless menu bar app on a
+    /// lid-closed Mac: timers slip by many minutes, minutes go unsampled and heartbeats stop.
+    private var activity: NSObjectProtocol?
+
     func start() {
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "Continuous thermal monitoring and heartbeats")
         _ = cpu.sample()
         _ = processes.sample()
         lastProcessSample = Date()

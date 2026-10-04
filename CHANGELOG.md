@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Fix: on a lid-closed Mac, App Nap throttled Smolder's timers by many minutes, so samples went
+  missing and heartbeats stopped — which a dead man's switch reports as the Mac being offline.
+  Smolder now holds a user-initiated activity (system sleep still allowed) and sets
+  `NSAppSleepDisabled`.
+
 ## 0.1.0
 
 First release.

@@ -33,6 +33,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppSleepDisabled</key>
+	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
 </dict>
