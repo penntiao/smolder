@@ -49,4 +49,7 @@ struct StatusSnapshot: Codable, Equatable {
     var learning: Bool
     var openIncidents: [String]
     var topProcesses: [ProcessUsage]
+    /// Events not yet delivered everywhere, and why — lets a remote receiver notice a broken alert path.
+    var pendingDeliveries: Int
+    var deliveryErrors: [String: String]
 }

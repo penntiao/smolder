@@ -14,7 +14,8 @@
 "About" = "关于";
 "Accept as normal" = "接受为新常态";
 "Add" = "添加";
-"Also send heartbeats" = "同时发送心跳";
+"Send alerts" = "发送报警";
+"Send heartbeats" = "发送心跳";
 "Also watch the idle power floor" = "同时盯住空闲功耗底线";
 "Always ignore" = "永远忽略";
 "Answer /status from this chat" = "回复这个对话里的 /status";

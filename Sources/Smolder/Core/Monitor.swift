@@ -275,10 +275,10 @@ final class Monitor: ObservableObject {
             list.append(TelegramNotifier(botToken: token, chatID: config.telegram.chatID))
         }
         if config.webhook.enabled, let url = URL(string: config.webhook.url), url.scheme?.hasPrefix("http") == true {
-            list.append(WebhookNotifier(url: url, bearerToken: SecretStore.get(Secrets.webhookBearer), sendHeartbeats: config.webhook.sendHeartbeats))
+            list.append(WebhookNotifier(url: url, bearerToken: SecretStore.get(Secrets.webhookBearer), sendEvents: config.webhook.sendEvents, sendHeartbeats: config.webhook.sendHeartbeats))
         }
         if config.command.enabled, !config.command.executable.isEmpty {
-            list.append(CommandNotifier(executable: config.command.executable, arguments: config.command.arguments, sendHeartbeats: config.command.sendHeartbeats))
+            list.append(CommandNotifier(executable: config.command.executable, arguments: config.command.arguments, sendEvents: config.command.sendEvents, sendHeartbeats: config.command.sendHeartbeats))
         }
         if config.ping.enabled, let url = URL(string: config.ping.url), url.scheme?.hasPrefix("http") == true {
             list.append(PingNotifier(url: url))
@@ -325,7 +325,8 @@ final class Monitor: ObservableObject {
         StatusSnapshot(dieMax: live.dieMax, expectedDie: live.expectedDie, ssd: live.ssd, battery: live.battery,
                        power: live.power, cpuCores: live.cpuCores, thermalState: live.pressure.rawValue,
                        learning: live.learning, openIncidents: live.openIncidents.map(\.title),
-                       topProcesses: Array(live.topProcesses.prefix(5)))
+                       topProcesses: Array(live.topProcesses.prefix(5)),
+                       pendingDeliveries: live.pendingDeliveries, deliveryErrors: live.deliveryErrors)
     }
 
     func statusHTML() -> String {

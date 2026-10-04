@@ -34,7 +34,8 @@ same `incidentID`).
 
 ## Heartbeat
 
-Sent every 60 seconds by default when *Also send heartbeats* is on.
+Sent every 60 seconds by default when *Send heartbeats* is on. Turn *Send alerts* off on a destination
+that should only receive heartbeats.
 
 ```json
 {
@@ -48,13 +49,17 @@ Sent every 60 seconds by default when *Also send heartbeats* is on.
       "dieMax": 44.8, "expectedDie": 41.2, "ssd": 33, "battery": 25.4,
       "power": 1.2, "cpuCores": 0.6, "thermalState": 0, "learning": false,
       "openIncidents": [],
-      "topProcesses": [{ "pid": 24755, "name": "claude", "path": "/…/claude", "cores": 0.31 }]
+      "topProcesses": [{ "pid": 24755, "name": "claude", "path": "/…/claude", "cores": 0.31 }],
+      "pendingDeliveries": 0,
+      "deliveryErrors": {}
     }
   }
 }
 ```
 
-A changed `bootTime` means the Mac restarted.
+A changed `bootTime` means the Mac restarted. A non-zero `pendingDeliveries` with `deliveryErrors` that
+persist means alerts are not getting out (for example Telegram is unreachable) — worth alerting on from
+the receiving side.
 
 ## Delivery guarantees
 

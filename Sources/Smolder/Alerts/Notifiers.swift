@@ -64,9 +64,13 @@ struct WebhookNotifier: Notifier {
     let id = "webhook"
     var url: URL
     var bearerToken: String?
+    var sendEvents: Bool
     var sendHeartbeats: Bool
 
-    func deliver(_ event: SmolderEvent) async throws { try await post(type: "event", payload: event) }
+    func deliver(_ event: SmolderEvent) async throws {
+        guard sendEvents else { return }
+        try await post(type: "event", payload: event)
+    }
 
     func heartbeat(_ beat: Heartbeat) async throws {
         guard sendHeartbeats else { return }
@@ -91,10 +95,14 @@ struct CommandNotifier: Notifier {
     let id = "command"
     var executable: String
     var arguments: [String]
+    var sendEvents: Bool
     var sendHeartbeats: Bool
     var timeout: TimeInterval = 30
 
-    func deliver(_ event: SmolderEvent) async throws { try await run(type: "event", payload: event) }
+    func deliver(_ event: SmolderEvent) async throws {
+        guard sendEvents else { return }
+        try await run(type: "event", payload: event)
+    }
 
     func heartbeat(_ beat: Heartbeat) async throws {
         guard sendHeartbeats else { return }

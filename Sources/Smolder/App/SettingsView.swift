@@ -96,7 +96,8 @@ private struct NotificationsTab: View {
                 Toggle(L("POST JSON to a URL"), isOn: $monitor.config.webhook.enabled)
                 TextField("https://…", text: $monitor.config.webhook.url)
                 SecureField(L("Bearer token (optional)"), text: $draft.bearer).onSubmit { monitor.setWebhookBearer(draft.bearer) }
-                Toggle(L("Also send heartbeats"), isOn: $monitor.config.webhook.sendHeartbeats)
+                Toggle(L("Send alerts"), isOn: $monitor.config.webhook.sendEvents)
+                Toggle(L("Send heartbeats"), isOn: $monitor.config.webhook.sendHeartbeats)
             }
 
             Section(L("Custom command")) {
@@ -107,7 +108,8 @@ private struct NotificationsTab: View {
                     .onChange(of: draft.arguments) { _, value in
                         monitor.config.command.arguments = value.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
                     }
-                Toggle(L("Also send heartbeats"), isOn: $monitor.config.command.sendHeartbeats)
+                Toggle(L("Send alerts"), isOn: $monitor.config.command.sendEvents)
+                Toggle(L("Send heartbeats"), isOn: $monitor.config.command.sendHeartbeats)
             }
 
             Section(L("Dead man's switch")) {

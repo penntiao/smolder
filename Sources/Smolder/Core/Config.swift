@@ -58,6 +58,7 @@ struct Config: Codable, Equatable {
     struct Webhook: Codable, Equatable {
         var enabled = false
         var url = ""
+        var sendEvents = true
         var sendHeartbeats = true
     }
 
@@ -66,6 +67,7 @@ struct Config: Codable, Equatable {
         /// Absolute path of the executable, e.g. /usr/bin/ssh
         var executable = ""
         var arguments: [String] = []
+        var sendEvents = true
         var sendHeartbeats = true
     }
 
