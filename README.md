@@ -65,6 +65,7 @@ How the models work, and the research behind them, is in [docs/how-it-works.md](
 - **Dead man's switch** — Smolder cannot report its own death. Send heartbeats to healthchecks.io,
   Uptime Kuma or your own server and let *that* alert when they stop.
 
+Check every destination from the terminal with `/Applications/Smolder.app/Contents/MacOS/Smolder --test-notify`.
 Payloads and recipes: [docs/integrations.md](docs/integrations.md).
 
 ## Install

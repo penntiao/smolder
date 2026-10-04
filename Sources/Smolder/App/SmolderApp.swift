@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         super.init()
         if CommandLine.arguments.contains("--probe") { Probe.run(); exit(0) }
+        if CommandLine.arguments.contains("--test-notify") { exit(TestNotify.run() ? 0 : 1) }
         if CommandLine.arguments.contains("--render-ui") { return }
         SingleInstance.claim()
         MainActor.assumeIsolated {
@@ -100,6 +101,37 @@ enum SingleInstance {
         DistributedNotificationCenter.default().addObserver(forName: yieldNotification, object: nil, queue: .main) { _ in
             if !LaunchAgent.isSupervised { NSApp.terminate(nil) }
         }
+    }
+}
+
+/// `Smolder --test-notify`: send one test message to every configured destination and report each result.
+enum TestNotify {
+    static func run() -> Bool {
+        let config = ConfigStore.load()
+        Localization.shared.apply(languageCode: config.general.language)
+        var notifiers: [Notifier] = []
+        let token = SecretStore.get(Secrets.telegramToken) ?? ""
+        if config.telegram.enabled, !token.isEmpty { notifiers.append(TelegramNotifier(botToken: token, chatID: config.telegram.chatID)) }
+        if config.webhook.enabled, let url = URL(string: config.webhook.url) {
+            notifiers.append(WebhookNotifier(url: url, bearerToken: SecretStore.get(Secrets.webhookBearer), sendEvents: true, sendHeartbeats: false))
+        }
+        if config.command.enabled, !config.command.executable.isEmpty {
+            notifiers.append(CommandNotifier(executable: config.command.executable, arguments: config.command.arguments,
+                                             sendEvents: config.command.sendEvents, sendHeartbeats: false))
+        }
+        guard !notifiers.isEmpty else { print("No destinations configured (macOS notifications are tested from Settings)."); return false }
+        let event = SmolderEvent(kind: .test, severity: .info, title: L("Smolder test notification"),
+                                 lines: [L("If you can read this, notifications work.")], incidentID: UUID().uuidString, startedAt: Date())
+        var allOK = true
+        let done = DispatchSemaphore(value: 0)
+        Task {
+            for n in notifiers {
+                do { try await n.deliver(event); print("✓ \(n.id)") } catch { allOK = false; print("✗ \(n.id): \(error.localizedDescription)") }
+            }
+            done.signal()
+        }
+        done.wait()
+        return allOK
     }
 }
 

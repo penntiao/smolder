@@ -6,6 +6,7 @@
   missing and heartbeats stopped — which a dead man's switch reports as the Mac being offline.
   Smolder now holds a user-initiated activity (system sleep still allowed) and sets
   `NSAppSleepDisabled`.
+- `Smolder --test-notify` sends a test message to every configured destination and prints each result.
 
 ## 0.1.0
 

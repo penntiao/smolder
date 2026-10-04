@@ -47,6 +47,7 @@ MacBook、编译机、24 小时跑 AI 的机器。它会学习这台 Mac 平时�
 - **失联报警**：Smolder 没法报告自己挂了。把心跳发到 healthchecks.io、Uptime Kuma 或你自己的服务器，
   让**它们**在心跳停止时报警。
 
+在终端运行 `/Applications/Smolder.app/Contents/MacOS/Smolder --test-notify`，可以给每个通知去处各发一条测试消息。
 数据格式和接法：[docs/integrations.md](docs/integrations.md)（英文）。
 
 ## 安装
