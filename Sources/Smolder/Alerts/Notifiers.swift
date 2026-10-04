@@ -183,7 +183,11 @@ struct LocalNotifier: Notifier {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
+    /// Best effort: without permission (nobody ever clicked "Allow" on a headless Mac) the banner is
+    /// skipped rather than failed, so it never holds an event in the outbox.
     func deliver(_ event: SmolderEvent) async throws {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
         let content = UNMutableNotificationContent()
         content.title = event.title
         content.body = event.lines.joined(separator: "\n")
