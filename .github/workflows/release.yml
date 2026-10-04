@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check VERSION matches tag
+        run: test "v$(cat VERSION)" = "${GITHUB_REF_NAME}"
+      - name: Test
+        run: swift test
+      - name: Build
+        run: scripts/build-app.sh
+      - name: Package
+        run: |
+          VERSION="$(cat VERSION)"
+          ditto -c -k --keepParent build/Smolder.app "Smolder-${VERSION}.zip"
+          shasum -a 256 "Smolder-${VERSION}.zip" | tee "Smolder-${VERSION}.zip.sha256"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(cat VERSION)"
+          NOTES="$(awk "/^## ${VERSION}/{f=1;next} /^## /{f=0} f" CHANGELOG.md)"
+          gh release create "${GITHUB_REF_NAME}" "Smolder-${VERSION}.zip" "Smolder-${VERSION}.zip.sha256" \
+            --title "Smolder ${VERSION}" --notes "${NOTES:-See CHANGELOG.md}"

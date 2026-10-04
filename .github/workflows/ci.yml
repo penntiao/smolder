@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Test
+        run: swift test
+      - name: Build app bundle
+        run: scripts/build-app.sh
+      - name: Probe sensors (runner is a VM, readings may be empty)
+        run: build/Smolder.app/Contents/MacOS/Smolder --probe || true
