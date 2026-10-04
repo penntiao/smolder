@@ -32,6 +32,16 @@ enum LaunchAgent {
     /// True when this process was started by our LaunchAgent.
     static var isSupervised: Bool { ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == label }
 
+    /// Opened some other way (Finder, `open`, Homebrew reopening it after an upgrade) while the agent is
+    /// installed: ask launchd to run the supervised copy instead. Returns false if launchd would not, in
+    /// which case this copy keeps running unsupervised rather than leaving nothing running.
+    static func handOverToLaunchd() -> Bool {
+        guard isInstalled, !isSupervised else { return false }
+        let target = "gui/\(getuid())/\(label)"
+        if launchctl(["kickstart", target]) == 0 { return true }
+        return launchctl(["bootstrap", "gui/\(getuid())", plistURL.path]) == 0
+    }
+
     static func uninstall() {
         launchctl(["bootout", "gui/\(getuid())/\(label)"])
         try? FileManager.default.removeItem(at: plistURL)

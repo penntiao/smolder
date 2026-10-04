@@ -91,6 +91,7 @@ enum SingleInstance {
     static let yieldNotification = Notification.Name("io.github.penntiao.smolder.yield")
 
     static func claim() {
+        if LaunchAgent.handOverToLaunchd() { exit(0) }
         let others = { NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             .filter { $0.processIdentifier != getpid() } }
         if !others().isEmpty {
