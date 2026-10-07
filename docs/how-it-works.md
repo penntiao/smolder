@@ -57,6 +57,12 @@ with its 14-day median. Real work raises the peaks; something that never stops r
 too. This catches long-running burners that no single program threshold would, and it is suppressed while a
 runaway program is already being reported.
 
+A lit screen raises the quiet moments as well: on the MacBook Air Smolder was built on, the 10th percentile
+is 0.35 W with every screen off and 2.2 W with the screen on. So both the window and the baseline use only
+minutes when every screen was off. While someone is using the Mac — fewer than 90 % screen-off minutes in the
+window — the floor is not judged at all, and an open floor incident neither recovers nor escalates
+meanwhile: a minute that could not be judged is not a normal minute.
+
 ## 3. Hard limits
 
 These never adapt:

@@ -9,10 +9,10 @@ final class DetectionTests: XCTestCase {
     let t0 = Date(timeIntervalSince1970: 1_790_000_000)
     var config = Config.Detection()
 
-    private func minutes(_ count: Int, start: Date? = nil, power: (Int) -> Double, die: (Int) -> Double, pressure: Int = 0) -> [MinuteSample] {
+    private func minutes(_ count: Int, start: Date? = nil, power: (Int) -> Double, die: (Int) -> Double, pressure: Int = 0, screenOn: Bool? = nil) -> [MinuteSample] {
         (0..<count).map { i in
             MinuteSample(timestamp: (start ?? t0).addingTimeInterval(Double(i) * 60), dieMax: die(i) + 4, dieAvg: die(i),
-                         ssd: 30, battery: 26, power: power(i), cpuCores: nil, thermalState: pressure, expectedDie: nil)
+                         ssd: 30, battery: 26, power: power(i), cpuCores: nil, thermalState: pressure, expectedDie: nil, screenOn: screenOn)
         }
     }
 
@@ -154,6 +154,40 @@ final class DetectionTests: XCTestCase {
                       "busy work with quiet moments keeps the floor low")
     }
 
+    /// 2026-10-07, the first day after learning: someone opened the lid and watched video for two hours.
+    /// The screen alone kept every quiet minute at 7–9 W against a 0.5 W baseline — not background work.
+    func testLitScreenIsNotBackgroundWork() {
+        let detector = PowerFloorDetector()
+        detector.setBaselineForTesting(0.5)
+        let watching = minutes(120, power: { i in [7.6, 8.8, 9.5, 12.1, 17.8][i % 5] }, die: { _ in 36 }, screenOn: true)
+        let ctx = MinuteContext(now: t0, minutes: watching, programs: [], learning: false, config: config)
+        XCTAssertFalse(detector.canJudge(ctx))
+        XCTAssertTrue(detector.evaluate(ctx, suppress: false).isEmpty)
+
+        // Lid closed after an hour: still too few screen-off minutes to judge.
+        let mixed = Array(watching.prefix(60)) + minutes(60, start: t0.addingTimeInterval(3600), power: { _ in 2.6 }, die: { _ in 30 }, screenOn: false)
+        XCTAssertFalse(detector.canJudge(MinuteContext(now: t0, minutes: mixed, programs: [], learning: false, config: config)))
+
+        // The same raised floor with every screen off is exactly what the rule is for.
+        let dark = minutes(120, power: { _ in 2.6 }, die: { _ in 30 }, screenOn: false)
+        XCTAssertEqual(detector.evaluate(MinuteContext(now: t0, minutes: dark, programs: [], learning: false, config: config), suppress: false).map(\.key),
+                       [PowerFloorDetector.key])
+    }
+
+    func testFloorBaselineIgnoresScreenOnMinutes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        // 26 hours with every screen off at 0.5 W, then two days of use at 4 W with the screen on:
+        // most hours are screen-on, so counting them would put the baseline at 4 W.
+        for s in minutes(26 * 60, power: { _ in 0.5 }, die: { _ in 30 }, screenOn: false) { store.append(s) }
+        for s in minutes(48 * 60, start: t0.addingTimeInterval(26 * 3600), power: { _ in 4 }, die: { _ in 40 }, screenOn: true) { store.append(s) }
+        XCTAssertEqual(store.samples(since: t0).map(\.screenOn).filter { $0 == true }.count, 48 * 60, "screen state survives storage")
+        let detector = PowerFloorDetector()
+        detector.refreshBaseline(store: store, excluded: [], config: config, now: t0.addingTimeInterval(74 * 3600))
+        XCTAssertEqual(try XCTUnwrap(detector.baselineFloor), 0.5, accuracy: 0.01)
+    }
+
     // MARK: hard limits
 
     func testThrottlingMustLastTheFullWindow() {
@@ -177,6 +211,20 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(events.last?.kind, .recovered)
         XCTAssertTrue(tracker.open.isEmpty)
         XCTAssertEqual(tracker.excludedRanges.count, 1)
+    }
+
+    func testUnjudgedMinutesDoNotResolveAnIncident() {
+        let tracker = IncidentTracker(open: [], history: [])
+        let finding = Finding(key: PowerFloorDetector.key, kind: .runawayProcess, severity: .warning, title: "f", lines: [])
+        _ = tracker.update(findings: [finding], now: t0, clearMinutes: 15, notifyRecoveries: true)
+        var events: [SmolderEvent] = []
+        for m in 1...60 {
+            events += tracker.update(findings: [], held: [PowerFloorDetector.key], now: t0.addingTimeInterval(Double(m) * 60), clearMinutes: 15, notifyRecoveries: true)
+        }
+        XCTAssertTrue(events.isEmpty, "an hour with the screen on is not an hour of normal")
+        XCTAssertEqual(tracker.open[PowerFloorDetector.key]?.normalStreak, 0)
+        for m in 61...75 { events += tracker.update(findings: [], now: t0.addingTimeInterval(Double(m) * 60), clearMinutes: 15, notifyRecoveries: true) }
+        XCTAssertEqual(events.map(\.kind), [.recovered])
     }
 
     func testBlipResetsRecoveryCountdown() {

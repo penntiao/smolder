@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Fix: "Busy in the background" fired whenever someone used the Mac for two hours — a lit screen alone keeps
+  every quiet moment several watts above a lid-closed baseline. The idle power floor now counts only minutes
+  with every screen off, for both the window and the baseline, and is not judged while the Mac is in use.
+  A floor incident that cannot be judged stays open instead of being reported as resolved.
+- Each minute in `history.sqlite` records whether a screen was lit (`screen_on`); `--probe` prints it.
+
 ## 0.1.1
 
 - Fix: macOS notifications without permission are skipped instead of holding events in the outbox.

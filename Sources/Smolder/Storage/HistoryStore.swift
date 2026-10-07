@@ -12,6 +12,7 @@ struct MinuteSample: Codable, Equatable {
     var cpuCores: Double?     // whole-system CPU usage, cores
     var thermalState: Int     // PressureLevel raw value
     var expectedDie: Double?  // die temperature the thermal model expected
+    var screenOn: Bool? = nil // a display was lit during this minute; nil in rows from before 0.1.2
 }
 
 final class HistoryStore {
@@ -31,9 +32,10 @@ final class HistoryStore {
                 ts INTEGER PRIMARY KEY,
                 die_max REAL, die_avg REAL, ssd REAL, battery REAL,
                 power REAL, cpu REAL, thermal INTEGER NOT NULL DEFAULT 0,
-                expected_die REAL
+                expected_die REAL, screen_on INTEGER
             )
             """)
+        if !hasColumn("minutes", "screen_on") { try exec("ALTER TABLE minutes ADD COLUMN screen_on INTEGER") }
         // Average cores per program per 10-minute bucket (only >= 0.01), used to learn each program's own normal
         try exec("""
             CREATE TABLE IF NOT EXISTS process_usage (
@@ -111,7 +113,7 @@ final class HistoryStore {
 
     func append(_ s: MinuteSample) {
         queue.sync {
-            let sql = "INSERT OR REPLACE INTO minutes (ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die) VALUES (?,?,?,?,?,?,?,?,?)"
+            let sql = "INSERT OR REPLACE INTO minutes (ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on) VALUES (?,?,?,?,?,?,?,?,?,?)"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
@@ -120,6 +122,7 @@ final class HistoryStore {
             bind(stmt, 6, s.power); bind(stmt, 7, s.cpuCores)
             sqlite3_bind_int(stmt, 8, Int32(s.thermalState))
             bind(stmt, 9, s.expectedDie)
+            if let on = s.screenOn { sqlite3_bind_int(stmt, 10, on ? 1 : 0) } else { sqlite3_bind_null(stmt, 10) }
             sqlite3_step(stmt)
         }
     }
@@ -127,7 +130,7 @@ final class HistoryStore {
     func samples(since: Date) -> [MinuteSample] {
         queue.sync {
             var result: [MinuteSample] = []
-            let sql = "SELECT ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die FROM minutes WHERE ts >= ? ORDER BY ts"
+            let sql = "SELECT ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on FROM minutes WHERE ts >= ? ORDER BY ts"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(stmt) }
@@ -137,7 +140,8 @@ final class HistoryStore {
                     timestamp: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 0))),
                     dieMax: column(stmt, 1), dieAvg: column(stmt, 2), ssd: column(stmt, 3), battery: column(stmt, 4),
                     power: column(stmt, 5), cpuCores: column(stmt, 6),
-                    thermalState: Int(sqlite3_column_int(stmt, 7)), expectedDie: column(stmt, 8)))
+                    thermalState: Int(sqlite3_column_int(stmt, 7)), expectedDie: column(stmt, 8),
+                    screenOn: column(stmt, 9).map { $0 != 0 }))
             }
             return result
         }
@@ -155,6 +159,16 @@ final class HistoryStore {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw NSError(domain: "Smolder.History", code: 2, userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
         }
+    }
+
+    private func hasColumn(_ table: String, _ name: String) -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if String(cString: sqlite3_column_text(stmt, 1)) == name { return true }
+        }
+        return false
     }
 
     private func bind(_ stmt: OpaquePointer?, _ index: Int32, _ value: Double?) {

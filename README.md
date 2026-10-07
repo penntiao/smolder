@@ -38,7 +38,7 @@ So Smolder does not ask *"is it hot?"*. It asks *"is it hotter than what it is d
 | Alert | Fires when | Why it is not a fixed threshold |
 |---|---|---|
 | **Runaway program** | A program uses far more CPU than *its own* usual peak (≥ 0.5 cores and ≥ 1.5× its 14-day peak) for 30 minutes | A compiler or AI agent that is busy every day is not flagged; a daemon that normally idles and suddenly burns a core is |
-| **Busy in the background** | The *quietest* moments of the last two hours draw ≥ 1.5 W more than usual | Real work raises the power *peaks*; something that never stops raises the *floor* |
+| **Busy in the background** | With every screen off, the *quietest* moments of the last two hours draw ≥ 1.5 W more than usual | Real work raises the power *peaks*; something that never stops raises the *floor*. A lit screen raises it too, so this is not judged while the Mac is in use |
 | **Hotter than the load explains** | The chip runs ≥ 3 °C (or 4 residual MADs) above what the current power draw predicts, for 20 minutes | A learned power → temperature model: heavy work that runs hot is expected; a blocked vent or a hot room is not |
 | **Hard limits** | macOS throttles for 10 minutes, critical thermal pressure, or battery ≥ 35 °C | Never learned, never adapted — the backstop for anything the baselines could absorb |
 

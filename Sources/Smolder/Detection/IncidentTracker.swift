@@ -33,7 +33,9 @@ final class IncidentTracker {
     /// Programs currently under an incident; their usage is stored as anomalous.
     var anomalousPrograms: Set<String> { open.values.reduce(into: Set<String>()) { $0.formUnion($1.programs) } }
 
-    func update(findings: [Finding], now: Date, clearMinutes: Int, notifyRecoveries: Bool) -> [SmolderEvent] {
+    /// `held`: keys whose detector could not judge this minute. Their incidents stay exactly as they are —
+    /// no step toward recovery, since an unseen minute is not a normal one.
+    func update(findings: [Finding], held: Set<String> = [], now: Date, clearMinutes: Int, notifyRecoveries: Bool) -> [SmolderEvent] {
         var events: [SmolderEvent] = []
         var seen = Set<String>()
         for f in findings {
@@ -59,7 +61,7 @@ final class IncidentTracker {
                                            incidentID: incident.id, startedAt: now))
             }
         }
-        for (key, var incident) in open where !seen.contains(key) {
+        for (key, var incident) in open where !seen.contains(key) && !held.contains(key) {
             incident.normalStreak += 1
             if incident.normalStreak >= clearMinutes {
                 incident.closedAt = now

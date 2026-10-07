@@ -105,8 +105,10 @@ final class RunawayDetector {
 // MARK: - Idle power floor
 
 /// Catches long-running background burners regardless of which program: real work raises the power
-/// *peaks*, but something that never stops raises the *quiet moments* too.
+/// *peaks*, but something that never stops raises the *quiet moments* too. A lit screen raises them as
+/// well, so only minutes with every screen off count — while someone is using the Mac it is not judged.
 final class PowerFloorDetector {
+    static let key = "power-floor"
     private(set) var baselineFloor: Double?
     private var loadedAt: Date?
 
@@ -118,24 +120,33 @@ final class PowerFloorDetector {
         let samples = store.samples(since: now.addingTimeInterval(-config.baselineDays * 86400))
         var hourly: [Int: [Double]] = [:]
         for s in samples {
-            guard let p = s.power, !excluded.contains(where: { $0.contains(s.timestamp) }) else { continue }
+            guard let p = s.power, s.screenOn != true, !excluded.contains(where: { $0.contains(s.timestamp) }) else { continue }
             hourly[Int(s.timestamp.timeIntervalSince1970 / 3600), default: []].append(p)
         }
         let floors = hourly.values.filter { $0.count >= 45 }.compactMap { Stats.quantile($0, 0.1) }
         baselineFloor = floors.count >= 24 ? Stats.median(floors) : nil
     }
 
+    private static func screenOffPower(_ ctx: MinuteContext) -> [Double] {
+        ctx.minutes.suffix(ctx.config.powerFloorSustainMinutes).filter { $0.screenOn != true }.compactMap(\.power)
+    }
+
+    /// False while the window holds too few screen-off minutes. Not being able to judge is not "normal":
+    /// an open floor incident must neither recover nor escalate meanwhile.
+    func canJudge(_ ctx: MinuteContext) -> Bool {
+        Self.screenOffPower(ctx).count >= Int(Double(ctx.config.powerFloorSustainMinutes) * 0.9)
+    }
+
     func evaluate(_ ctx: MinuteContext, suppress: Bool) -> [Finding] {
         let c = ctx.config
-        guard c.powerFloorEnabled, !ctx.learning, !suppress, let baseline = baselineFloor else { return [] }
-        let window = ctx.minutes.suffix(c.powerFloorSustainMinutes).compactMap(\.power)
-        guard window.count >= Int(Double(c.powerFloorSustainMinutes) * 0.9) else { return [] }
+        guard c.powerFloorEnabled, !ctx.learning, !suppress, let baseline = baselineFloor, canJudge(ctx) else { return [] }
+        let window = Self.screenOffPower(ctx)
         let recentHalf = Array(window.suffix(window.count / 2))
         guard let floor = Stats.quantile(window, 0.1), let recentFloor = Stats.quantile(recentHalf, 0.1),
               floor > baseline + c.powerFloorRiseWatts, recentFloor > baseline + c.powerFloorRiseWatts else { return [] }
         var lines = [L("Quietest power for %@ was %@, usually %@", Format.duration(Double(c.powerFloorSustainMinutes) * 60), Format.watts(floor), Format.watts(baseline))]
         if let top = ctx.topProgramsLine(lastMinutes: c.powerFloorSustainMinutes) { lines.append(top) }
-        return [Finding(key: "power-floor", kind: .runawayProcess, severity: .warning,
+        return [Finding(key: Self.key, kind: .runawayProcess, severity: .warning,
                         title: L("Something keeps the Mac busy in the background"), lines: lines)]
     }
 }

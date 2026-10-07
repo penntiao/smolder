@@ -64,7 +64,7 @@ final class Monitor: ObservableObject {
 
     // Current minute accumulators
     private var minuteStart = Monitor.minuteFloor(Date())
-    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel)] = []
+    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel, Bool?)] = []
     private var programSeconds: [String: Double] = [:]
     private var programNames: [String: String] = [:]
     private var programPIDs: [String: (Int32, Double)] = [:]
@@ -144,7 +144,7 @@ final class Monitor: ObservableObject {
     private func sampleSensors() {
         let temps = hid.read()
         let power = smc?.float("PSTR")
-        readings.append((temps, power, cpu.sample(), pressure.read()))
+        readings.append((temps, power, cpu.sample(), pressure.read(), ScreenState.isOn()))
     }
 
     private func sampleProcesses(now: Date) {
@@ -171,6 +171,7 @@ final class Monitor: ObservableObject {
         }
         guard !readings.isEmpty else { return }
 
+        let screens = readings.compactMap(\.4)
         var sample = MinuteSample(
             timestamp: start,
             dieMax: readings.compactMap(\.0.dieMax).max(),
@@ -180,7 +181,8 @@ final class Monitor: ObservableObject {
             power: Stats.mean(readings.compactMap(\.1)),
             cpuCores: Stats.mean(readings.compactMap(\.2)),
             thermalState: readings.map(\.3.rawValue).max() ?? 0,
-            expectedDie: nil)
+            expectedDie: nil,
+            screenOn: screens.isEmpty ? nil : screens.contains(true))
         sample.expectedDie = thermal.observe(sample)
 
         let covered = max(programCovered, 1)
@@ -225,12 +227,13 @@ final class Monitor: ObservableObject {
         let ctx = MinuteContext(now: now, minutes: recentMinutes, programs: recentPrograms, learning: learning, config: d)
         let runawayFindings = runaway.evaluate(ctx)
         var findings = runawayFindings
-        let runawayOpen = tracker.open.values.contains { $0.kind == .runawayProcess && $0.key != "power-floor" }
+        let runawayOpen = tracker.open.values.contains { $0.kind == .runawayProcess && $0.key != PowerFloorDetector.key }
         findings += powerFloor.evaluate(ctx, suppress: runawayOpen || !runawayFindings.isEmpty)
+        let held: Set<String> = powerFloor.canJudge(ctx) ? [] : [PowerFloorDetector.key]
         findings += thermal.evaluate(ctx)
         findings += HardLimitDetector.evaluate(ctx)
 
-        let events = tracker.update(findings: findings, now: now, clearMinutes: d.clearMinutes, notifyRecoveries: config.general.notifyRecoveries)
+        let events = tracker.update(findings: findings, held: held, now: now, clearMinutes: d.clearMinutes, notifyRecoveries: config.general.notifyRecoveries)
         persisted.openIncidents = Array(tracker.open.values)
         persisted.history = tracker.history
         savePersisted()
@@ -416,7 +419,7 @@ final class Monitor: ObservableObject {
     // MARK: - Helpers
 
     private func refreshLive() {
-        guard let (temps, power, cpuCores, level) = readings.last else { return }
+        guard let (temps, power, cpuCores, level, _) = readings.last else { return }
         live.dieMax = temps.dieMax
         live.dieAvg = temps.dieAvg
         live.ssd = temps.ssd
