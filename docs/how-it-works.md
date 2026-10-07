@@ -20,7 +20,7 @@ Smolder splits the question into three that stay stable when the workload change
 ## 1. Is the chip hotter than its power draw explains?
 
 ```
-expected die temperature = base + R × P̃ + Rslow × P̃slow + k × C̃
+expected die temperature = base + R × P̃ + Rslow × P̃slow + k × C̃ + q × Q̃
 ```
 
 `P̃` is the system power passed through a first-order low-pass filter with time constant `τ`, mimicking the
@@ -29,6 +29,20 @@ for an hour of sustained work as heat soaks into the chassis, long after the chi
 CPU usage in cores through the fast filter. System power includes the display and the rest of the board, so
 at the same total watts a CPU-heavy load puts more of them into the die than a lit screen or video does; the
 CPU term accounts for that.
+
+`Q̃` is the P-core cluster's own power (SMC key `PP0b`, readable without root), through the fast filter.
+Busy cores say nothing about the clock: a build that pins the P-cores at their top frequency draws several
+times the watts of light work on the same number of cores. On an M4 `PP0b` tracks `powermetrics` CPU power
+within about 5 %, including under a full load where the chip caps its own frequency — something DVFS state
+residency (also readable without root) cannot see, since it reports the requested state. The energy
+counters in IOReport's *Energy Model* group are only refreshed when a privileged client asks (roughly every
+15 minutes, when `powerlogd` does), so they cannot drive a per-minute model.
+
+The `q` term is used only when it earns its place: once at least 12 hours of minutes carry P-core power (a third of what the first fit needs),
+the model is fitted on those minutes both with and without it, and the version with it is kept only if it
+cuts the 95th percentile of the absolute error by at least 10 % without widening the median error.
+Otherwise — or on a Mac without that sensor — the term is left out. The median alone would not do: the
+minutes this term is for (builds at the top clock) are a few percent of a day.
 
 `base`, `R`, `Rslow`, `k` and `τ` are fitted once a day from the last 14 days by least squares, after
 dropping points more than 3 robust standard deviations out (one refit). Coefficients are kept non-negative

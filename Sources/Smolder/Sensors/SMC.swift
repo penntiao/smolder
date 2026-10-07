@@ -38,6 +38,10 @@ final class SMC {
 
     deinit { IOServiceClose(connection) }
 
+    /// P-core cluster power in watts. Tracks `powermetrics` CPU power within ~5 % on an M4, including when
+    /// the chip caps frequency under a full load (which DVFS residency cannot see); needs no root.
+    static let cpuPowerKey = "PP0b"
+
     /// Reads a `flt ` key; nil if the key does not exist on this machine.
     func float(_ key: String) -> Double? {
         guard let (type, bytes) = read(key), type == "flt ", bytes.count == 4 else { return nil }

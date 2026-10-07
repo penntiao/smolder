@@ -171,7 +171,7 @@ final class DetectionTests: XCTestCase {
 
     func testThermalFitSeparatesCPUAndHeatSoak() throws {
         let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
-        XCTAssertEqual(fit.model, ThermalFit.currentModel)
+        XCTAssertEqual(fit.model, 2, "no P-core power in the history: the fit leaves that term out")
         XCTAssertEqual(fit.base, 24, accuracy: 1)
         XCTAssertEqual(fit.steadyResistance, 1.1, accuracy: 0.25)
         XCTAssertEqual(fit.cpuCoefficient, 2.0, accuracy: 0.5)
@@ -266,6 +266,84 @@ final class DetectionTests: XCTestCase {
         let detector = ThermalDetector(fit: fit)
         XCTAssertFalse(replay(detector, samples, config: config, track: false).last.isEmpty)
         XCTAssertEqual(detector.ambientOffset(at: samples.last!.timestamp.addingTimeInterval(60), config: config), config.thermalAmbientMaxOffset, accuracy: 1e-9)
+    }
+
+    // MARK: P-core power
+
+    /// Like `mixedMinutes`, plus the P-core cluster's own power: at the same busy cores, a build that pins the
+    /// P-cores at their top clock draws several times the watts of light work and heats the die accordingly.
+    private func clockedMinutes(start: Date, load: [(power: Double, cpu: Double, pcpu: Double)], cooling: Double = 1, seed: UInt64 = 5) -> [MinuteSample] {
+        var fast = load[0].power, slow = load[0].power, cpu = load[0].cpu, pcpu = load[0].pcpu
+        var rng = SeededRandom(seed: seed)
+        return load.enumerated().map { i, l in
+            fast += (1 - exp(-1 / 3.0)) * (l.power - fast)
+            slow += (1 - exp(-1 / 60.0)) * (l.power - slow)
+            cpu += (1 - exp(-1 / 3.0)) * (l.cpu - cpu)
+            pcpu += (1 - exp(-1 / 3.0)) * (l.pcpu - pcpu)
+            let die = 24 + cooling * (0.5 * fast + 0.5 * slow + 1.0 * cpu + 1.5 * pcpu) + rng.next(in: -0.4...0.4)
+            return MinuteSample(timestamp: start.addingTimeInterval(Double(i) * 60), dieMax: die + 6, dieAvg: die, ssd: 30, battery: 26,
+                                power: l.power, cpuCores: l.cpu, thermalState: 0, expectedDie: nil, cpuPower: l.pcpu)
+        }
+    }
+
+    /// Days of light work at a low clock and the occasional build at the top clock, with the same busy cores and
+    /// the same system watts — what system power and core counts cannot tell apart.
+    private func clockedHistory(days: Int, cpuPowerSensor: Bool = true) -> [MinuteSample] {
+        let day: [(power: Double, cpu: Double, pcpu: Double)] = (0..<1440).map { m in
+            switch m {
+            case 540..<660: return (power: 10, cpu: 2, pcpu: 1.5)       // bright screen and video, P-cores at a low clock
+            case 700..<730: return (power: 10, cpu: 2, pcpu: 8)         // build at the top clock, screen dimmed
+            case 1080..<1200: return m % 30 < 20 ? (power: 10, cpu: 2, pcpu: 1.5) : (power: 10, cpu: 2, pcpu: 8)
+            default: return (power: 0.5, cpu: 0.3, pcpu: 0.05)
+            }
+        }
+        let samples = clockedMinutes(start: t0, load: Array(repeating: day, count: days).flatMap { $0 })
+        return cpuPowerSensor ? samples : samples.map { var s = $0; s.cpuPower = nil; return s }
+    }
+
+    func testFitLearnsPCorePower() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(clockedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        XCTAssertEqual(fit.model, 3)
+        XCTAssertEqual(fit.cpuPowerCoefficient, 1.5, accuracy: 0.4)
+        let blind = try XCTUnwrap(ThermalModel.fit(clockedHistory(days: 4, cpuPowerSensor: false), excluded: [], minimumMinutes: 1000))
+        XCTAssertEqual(blind.model, 2)
+        XCTAssertLessThan(try XCTUnwrap(fit.residualP95), try XCTUnwrap(blind.residualP95) * 0.5, "the build minutes are explained")
+    }
+
+    /// 2026-10-07 15:08–15:40: a long build at the top clock ran the die 5–12 °C over a model that only knew
+    /// busy cores. With P-core power it is explained; the same build with cooling 40 % worse is still caught.
+    func testLongTopClockBuildIsExplainedByPCorePower() throws {
+        let start = t0.addingTimeInterval(5 * 86400)
+        let load = Array(repeating: (power: 0.5, cpu: 0.3, pcpu: 0.05), count: 60) + Array(repeating: (power: 10.0, cpu: 2.0, pcpu: 8.0), count: 90)
+        func flagged(sensor: Bool, cooling: Double) throws -> Bool {
+            let fit = try XCTUnwrap(ThermalModel.fit(clockedHistory(days: 4, cpuPowerSensor: sensor), excluded: [], minimumMinutes: 1000))
+            var samples = clockedMinutes(start: start, load: load, cooling: cooling, seed: 9)
+            if !sensor { samples = samples.map { var s = $0; s.cpuPower = nil; return s } }
+            return replay(ThermalDetector(fit: fit), samples, config: config, track: false).any
+        }
+        XCTAssertTrue(try flagged(sensor: false, cooling: 1), "control: without P-core power this build is a false alarm")
+        XCTAssertFalse(try flagged(sensor: true, cooling: 1))
+        XCTAssertTrue(try flagged(sensor: true, cooling: 1.4))
+    }
+
+    /// A P-core power reading that adds nothing (here: a noisy echo of busy cores) must not replace the
+    /// model that works; the fit stays at model 2.
+    func testUselessPCorePowerDoesNotReplaceTheModel() throws {
+        var rng = SeededRandom(seed: 21)
+        let history = mixedHistory(days: 4).map { s -> MinuteSample in var s = s; s.cpuPower = 2 * s.cpuCores! + rng.next(in: 0...0.5); return s }
+        let fit = try XCTUnwrap(ThermalModel.fit(history, excluded: [], minimumMinutes: 1000))
+        XCTAssertEqual(fit.model, 2)
+        XCTAssertEqual(fit.cpuPowerCoefficient, 0)
+    }
+
+    func testCPUPowerSurvivesStorage() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        for s in clockedMinutes(start: t0, load: [(power: 9, cpu: 2, pcpu: 6.5), (power: 1, cpu: 0.2, pcpu: 0.1)]) { store.append(s) }
+        var bare = minutes(1, start: t0.addingTimeInterval(120), power: { _ in 1 }, die: { _ in 30 })[0]; bare.cpuPower = nil
+        store.append(bare)
+        XCTAssertEqual(store.samples(since: t0).map(\.cpuPower), [6.5, 0.1, nil])
     }
 
     func testPowerOnlyFitFromOlderVersionStillLoads() throws {

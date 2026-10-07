@@ -32,7 +32,7 @@
 "Catch your Mac smoldering while the lid is closed." = "合着盖子，也能抓住你的 Mac 在悄悄发烧。";
 "Chat ID" = "对话 ID";
 "Check airflow around the Mac and the room temperature" = "检查 Mac 周围是否通风、室温是否过高";
-"Includes %@ for the room over the last %@" = "已按近 %2$@ 的室温修正 %1$@";
+"Includes %@ for the room over the last %@" = "已按近 %2$@的室温修正 %1$@";
 "Chip" = "芯片";
 "Chip · 24 h" = "芯片 · 24 小时";
 "Chip · 24 h · shaded = expected for the load" = "芯片 · 24 小时 · 阴影 = 按负载应有的温度";

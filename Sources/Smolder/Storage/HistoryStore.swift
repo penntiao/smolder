@@ -13,6 +13,7 @@ struct MinuteSample: Codable, Equatable {
     var thermalState: Int     // PressureLevel raw value
     var expectedDie: Double?  // die temperature the thermal model expected
     var screenOn: Bool? = nil // a display was lit during this minute; nil in rows from before 0.1.2
+    var cpuPower: Double? = nil // P-core cluster power, watts (SMC PP0b); nil where the Mac has no such key
 }
 
 final class HistoryStore {
@@ -32,10 +33,11 @@ final class HistoryStore {
                 ts INTEGER PRIMARY KEY,
                 die_max REAL, die_avg REAL, ssd REAL, battery REAL,
                 power REAL, cpu REAL, thermal INTEGER NOT NULL DEFAULT 0,
-                expected_die REAL, screen_on INTEGER
+                expected_die REAL, screen_on INTEGER, cpu_power REAL
             )
             """)
         if !hasColumn("minutes", "screen_on") { try exec("ALTER TABLE minutes ADD COLUMN screen_on INTEGER") }
+        if !hasColumn("minutes", "cpu_power") { try exec("ALTER TABLE minutes ADD COLUMN cpu_power REAL") }
         // Average cores per program per 10-minute bucket (only >= 0.01), used to learn each program's own normal
         try exec("""
             CREATE TABLE IF NOT EXISTS process_usage (
@@ -113,7 +115,7 @@ final class HistoryStore {
 
     func append(_ s: MinuteSample) {
         queue.sync {
-            let sql = "INSERT OR REPLACE INTO minutes (ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on) VALUES (?,?,?,?,?,?,?,?,?,?)"
+            let sql = "INSERT OR REPLACE INTO minutes (ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on, cpu_power) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
@@ -123,6 +125,7 @@ final class HistoryStore {
             sqlite3_bind_int(stmt, 8, Int32(s.thermalState))
             bind(stmt, 9, s.expectedDie)
             if let on = s.screenOn { sqlite3_bind_int(stmt, 10, on ? 1 : 0) } else { sqlite3_bind_null(stmt, 10) }
+            bind(stmt, 11, s.cpuPower)
             sqlite3_step(stmt)
         }
     }
@@ -130,7 +133,7 @@ final class HistoryStore {
     func samples(since: Date) -> [MinuteSample] {
         queue.sync {
             var result: [MinuteSample] = []
-            let sql = "SELECT ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on FROM minutes WHERE ts >= ? ORDER BY ts"
+            let sql = "SELECT ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on, cpu_power FROM minutes WHERE ts >= ? ORDER BY ts"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(stmt) }
@@ -141,7 +144,7 @@ final class HistoryStore {
                     dieMax: column(stmt, 1), dieAvg: column(stmt, 2), ssd: column(stmt, 3), battery: column(stmt, 4),
                     power: column(stmt, 5), cpuCores: column(stmt, 6),
                     thermalState: Int(sqlite3_column_int(stmt, 7)), expectedDie: column(stmt, 8),
-                    screenOn: column(stmt, 9).map { $0 != 0 }))
+                    screenOn: column(stmt, 9).map { $0 != 0 }, cpuPower: column(stmt, 10)))
             }
             return result
         }

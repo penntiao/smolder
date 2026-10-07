@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- Each minute records the P-core cluster's power (SMC `PP0b`, no root; new `cpu_power` column), and
+  `--probe` prints it.
+- The thermal model can use it: once 12 hours of minutes carry it, a fit with the P-core power term is
+  compared with one without on the same minutes and kept only if it cuts the tail error (95th percentile)
+  by 10 % without widening the median. Busy cores cannot tell a build at the top clock from light work at a
+  low one; this is what made long builds read as a cooling problem.
+
 ## 0.1.4
 
 - Fix: "Running hotter than the load explains" fired on warm afternoons. The model has no ambient term and the

@@ -175,9 +175,14 @@ final class ThermalDetector {
 
     init(fit: ThermalFit?) { self.fit = fit }
 
-    /// Refit once a day (or hourly until the first fit succeeds).
+    /// True once a minute has carried P-core power: this Mac has the sensor.
+    private(set) var sawCPUPower = false
+
+    /// Refit once a day; hourly until the first fit succeeds, and hourly while the Mac has a P-core power
+    /// sensor that the fit does not use yet, so the better model is taken up as soon as it earns its place.
     func refitIfDue(store: HistoryStore, excluded: [ClosedRange<Date>], config: Config.Detection, now: Date) -> ThermalFit? {
-        let interval: TimeInterval = fit == nil ? 3600 : 86400
+        let pending = fit == nil || (sawCPUPower && fit!.model < ThermalFit.currentModel)
+        let interval: TimeInterval = pending ? 3600 : 86400
         if let last = lastFitAttempt, now.timeIntervalSince(last) < interval { return nil }
         lastFitAttempt = now
         let samples = store.samples(since: now.addingTimeInterval(-config.baselineDays * 86400))
@@ -190,6 +195,7 @@ final class ThermalDetector {
 
     /// Feeds the minute and returns the model's expected die temperature (without the room offset).
     func observe(_ sample: MinuteSample, config: Config.Detection = Config.Detection()) -> Double? {
+        if sample.cpuPower != nil { sawCPUPower = true }
         guard let fit else { _ = filter.update(sample, tau: 3); return nil }
         input = filter.update(sample, tau: fit.tau)
         guard let input else { return nil }

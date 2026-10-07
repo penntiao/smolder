@@ -146,7 +146,7 @@ enum Probe {
         let t = hid.read()
         print("Smolder \(AppInfo.version) on \(ProcessInfo.processInfo.operatingSystemVersionString)")
         print("die max \(t.dieMax.map { String(format: "%.1f", $0) } ?? "–") avg \(t.dieAvg.map { String(format: "%.1f", $0) } ?? "–")  ssd \(t.ssd.map { String(format: "%.1f", $0) } ?? "–")  battery \(t.battery.map { String(format: "%.1f", $0) } ?? "–")")
-        print("power \(smc?.float("PSTR").map { String(format: "%.2f W", $0) } ?? "–")  cpu \(cpu.sample().map { String(format: "%.2f cores", $0) } ?? "–")  pressure \(pressure.read())  screen \(ScreenState.isOn().map { $0 ? "on" : "off" } ?? "–")")
+        print("power \(smc?.float("PSTR").map { String(format: "%.2f W", $0) } ?? "–")  P-cores \(smc?.float(SMC.cpuPowerKey).map { String(format: "%.2f W", $0) } ?? "–")  cpu \(cpu.sample().map { String(format: "%.2f cores", $0) } ?? "–")  pressure \(pressure.read())  screen \(ScreenState.isOn().map { $0 ? "on" : "off" } ?? "–")")
         for p in procs.sample().prefix(5) { print(String(format: "  %6d  %.2f  %@", p.pid, p.cores, p.name)) }
     }
 }

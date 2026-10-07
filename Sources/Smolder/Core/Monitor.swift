@@ -64,7 +64,7 @@ final class Monitor: ObservableObject {
 
     // Current minute accumulators
     private var minuteStart = Monitor.minuteFloor(Date())
-    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel, Bool?)] = []
+    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel, Bool?, Double?)] = []
     private var programSeconds: [String: Double] = [:]
     private var programNames: [String: String] = [:]
     private var programPIDs: [String: (Int32, Double)] = [:]
@@ -147,7 +147,7 @@ final class Monitor: ObservableObject {
     private func sampleSensors() {
         let temps = hid.read()
         let power = smc?.float("PSTR")
-        readings.append((temps, power, cpu.sample(), pressure.read(), ScreenState.isOn()))
+        readings.append((temps, power, cpu.sample(), pressure.read(), ScreenState.isOn(), smc?.float(SMC.cpuPowerKey)))
     }
 
     private func sampleProcesses(now: Date) {
@@ -185,7 +185,8 @@ final class Monitor: ObservableObject {
             cpuCores: Stats.mean(readings.compactMap(\.2)),
             thermalState: readings.map(\.3.rawValue).max() ?? 0,
             expectedDie: nil,
-            screenOn: screens.isEmpty ? nil : screens.contains(true))
+            screenOn: screens.isEmpty ? nil : screens.contains(true),
+            cpuPower: Stats.mean(readings.compactMap(\.5)))
         thermal.excluded = tracker.excludedRanges
         sample.expectedDie = thermal.observe(sample, config: config.detection).map { $0 + thermal.ambientOffset(at: now, config: config.detection) }
 
@@ -256,7 +257,7 @@ final class Monitor: ObservableObject {
     /// (the first fit with a full baseline window) and say so when the physics changed noticeably.
     private func checkDrift(_ fit: ThermalFit, now: Date) {
         // A reference from the power-only model (0.1.x) has a different R; start over with this one.
-        if persisted.referenceFit?.model != ThermalFit.currentModel { persisted.referenceFit = nil }
+        if persisted.referenceFit?.model != fit.model { persisted.referenceFit = nil }
         guard let reference = persisted.referenceFit else {
             if Double(fit.minutes) >= config.detection.baselineDays * 1440 * 0.5 { persisted.referenceFit = fit }
             return
@@ -426,7 +427,7 @@ final class Monitor: ObservableObject {
     // MARK: - Helpers
 
     private func refreshLive() {
-        guard let (temps, power, cpuCores, level, _) = readings.last else { return }
+        guard let (temps, power, cpuCores, level, _, _) = readings.last else { return }
         live.dieMax = temps.dieMax
         live.dieAvg = temps.dieAvg
         live.ssd = temps.ssd
