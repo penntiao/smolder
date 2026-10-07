@@ -153,14 +153,25 @@ final class PowerFloorDetector {
 
 // MARK: - Cooling anomaly
 
-/// Die temperature well above what the current power draw explains: blocked vents, a hot room, a Mac
-/// buried under something. High temperature under heavy load is expected and never flagged here.
+/// Die temperature well above what the current power draw explains: blocked vents, a Mac buried under
+/// something. High temperature under heavy load is expected and never flagged here.
+///
+/// The model has no ambient sensor, and the room swings several degrees over a day (an idle Mac reads
+/// about 5 °C warmer on a warm afternoon than at dawn) — more than the band. So the judgement is made
+/// against the model *plus* the room offset: the median residual over the past few hours, ending
+/// `thermalSustainMinutes` ago. Minutes inside incidents never enter it, so an anomaly that is already
+/// open cannot be absorbed; the offset is capped, and the hard limits stay as the backstop for a hot room.
 final class ThermalDetector {
     private(set) var fit: ThermalFit?
     private var filter = ThermalFilter()
     private(set) var input: ThermalInput?
     private var residuals: [(Date, Double)] = []
     private var lastFitAttempt: Date?
+    /// Incident spans (set by the caller each minute); their residuals are kept out of the room offset.
+    var excluded: [ClosedRange<Date>] = []
+
+    /// How far back the in-memory residuals must reach.
+    static func memoryHours(_ config: Config.Detection) -> Double { max(3, config.thermalAmbientHours) }
 
     init(fit: ThermalFit?) { self.fit = fit }
 
@@ -175,18 +186,37 @@ final class ThermalDetector {
         return newFit
     }
 
-    /// Feeds the minute and returns the expected die temperature, if the model has one.
-    func observe(_ sample: MinuteSample) -> Double? {
+    func setFitForTesting(_ fit: ThermalFit) { self.fit = fit; lastFitAttempt = .distantFuture }
+
+    /// Feeds the minute and returns the model's expected die temperature (without the room offset).
+    func observe(_ sample: MinuteSample, config: Config.Detection = Config.Detection()) -> Double? {
         guard let fit else { _ = filter.update(sample, tau: 3); return nil }
         input = filter.update(sample, tau: fit.tau)
         guard let input else { return nil }
         let expected = fit.expected(input)
         if let die = sample.dieAvg { residuals.append((sample.timestamp, die - expected)) }
-        residuals.removeAll { sample.timestamp.timeIntervalSince($0.0) > 3 * 3600 }
+        let keep = Self.memoryHours(config) * 3600
+        residuals.removeAll { sample.timestamp.timeIntervalSince($0.0) > keep }
         return expected
     }
 
-    var currentExpected: Double? { fit.flatMap { fit in input.map { fit.expected($0) } } }
+    /// Room offset at `now`: median residual over the ambient window, ending one sustain period ago.
+    /// Zero when off, or when too few unexcluded minutes are left to say.
+    func ambientOffset(at now: Date, config c: Config.Detection) -> Double {
+        guard c.thermalAmbientEnabled, c.thermalAmbientHours > 0 else { return 0 }
+        let end = now.addingTimeInterval(-Double(c.thermalSustainMinutes) * 60)
+        let start = now.addingTimeInterval(-c.thermalAmbientHours * 3600)
+        let values = residuals.filter { entry in
+            entry.0 >= start && entry.0 < end && !excluded.contains { $0.contains(entry.0) }
+        }.map(\.1)
+        let needed = Int(c.thermalAmbientHours * 60 * 0.25)
+        guard values.count >= needed, let median = Stats.median(values) else { return 0 }
+        return min(max(median, -c.thermalAmbientMaxOffset), c.thermalAmbientMaxOffset)
+    }
+
+    func currentExpected(at now: Date, config: Config.Detection) -> Double? {
+        fit.flatMap { fit in input.map { fit.expected($0) + ambientOffset(at: now, config: config) } }
+    }
 
     func band(_ config: Config.Detection) -> Double? {
         guard let fit else { return nil }
@@ -199,14 +229,18 @@ final class ThermalDetector {
               let latest = ctx.minutes.last, let die = latest.dieAvg else { return [] }
         // Outside the power range the model has really seen, its prediction is a guess: do not judge.
         guard input.power <= fit.powerP95 * 1.25 + 0.5 else { return [] }
+        let offset = ambientOffset(at: ctx.now, config: c)
         let recent = residuals.filter { ctx.now.timeIntervalSince($0.0) < Double(c.thermalSustainMinutes) * 60 + 30 }
         guard recent.count >= c.thermalSustainMinutes,
-              recent.filter({ $0.1 > band }).count >= Int(Double(c.thermalSustainMinutes) * 0.8) else { return [] }
-        let expected = fit.expected(input)
+              recent.filter({ $0.1 - offset > band }).count >= Int(Double(c.thermalSustainMinutes) * 0.8) else { return [] }
+        let expected = fit.expected(input) + offset
         var lines = [
             L("Die %@, expected %@ ± %@ at %@", Format.celsius(die), Format.celsius(expected), String(format: "%.0f", band), Format.watts(input.power)),
             L("%@ hotter than the load explains for %@", String(format: "%.0f°", die - expected), Format.duration(Double(c.thermalSustainMinutes) * 60)),
         ]
+        if abs(offset) >= 0.5 {
+            lines.append(L("Includes %@ for the room over the last %@", String(format: "%+.1f°", offset), Format.duration(c.thermalAmbientHours * 3600)))
+        }
         if let top = ctx.topProgramsLine(lastMinutes: c.thermalSustainMinutes) { lines.append(top) }
         lines.append(L("Check airflow around the Mac and the room temperature"))
         return [Finding(key: "thermal", kind: .thermalAnomaly, severity: .warning,

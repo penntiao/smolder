@@ -200,6 +200,74 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(Set(findings(soak: 1.4).map(\.key)), ["thermal"])
     }
 
+    // MARK: room offset
+
+    /// Minutes that sit `residual(i)` above what `fit` predicts for the given load.
+    private func offsetMinutes(_ fit: ThermalFit, start: Date, load: [(power: Double, cpu: Double)], residual: (Int) -> Double) -> [MinuteSample] {
+        var filter = ThermalFilter()
+        return load.enumerated().map { i, l in
+            var s = MinuteSample(timestamp: start.addingTimeInterval(Double(i) * 60), dieMax: nil, dieAvg: nil, ssd: 30, battery: 26,
+                                 power: l.power, cpuCores: l.cpu, thermalState: 0, expectedDie: nil)
+            let die = fit.expected(filter.update(s, tau: fit.tau)!) + residual(i)
+            s.dieAvg = die; s.dieMax = die + 5
+            return s
+        }
+    }
+
+    /// Feeds every minute; with `track`, incidents are opened and their spans kept out of the room offset
+    /// exactly as the app does. Returns the findings of the last minute and whether any minute had one.
+    private func replay(_ detector: ThermalDetector, _ samples: [MinuteSample], config: Config.Detection, track: Bool) -> (last: [Finding], any: Bool) {
+        let tracker = IncidentTracker(open: [], history: [])
+        var last: [Finding] = [], any = false
+        for (i, s) in samples.enumerated() {
+            let now = s.timestamp.addingTimeInterval(60)
+            if track { detector.excluded = tracker.excludedRanges }
+            _ = detector.observe(s, config: config)
+            last = detector.evaluate(MinuteContext(now: now, minutes: Array(samples[max(0, i - 179)...i]), programs: [], learning: false, config: config))
+            any = any || !last.isEmpty
+            if track { _ = tracker.update(findings: last, now: now, clearMinutes: config.clearMinutes, notifyRecoveries: true) }
+        }
+        return (last, any)
+    }
+
+    /// 2026-10-07 17:36: after a warm afternoon of idling ~1.6 °C above the model (the room, not the Mac),
+    /// half an hour of light use and its lingering heat put the die 3–4 °C over: reported as a cooling
+    /// problem. Judged against the room, it is not; a real 8 °C excess on top of the same room still is.
+    func testWarmRoomIsNotACoolingProblem() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        let start = t0.addingTimeInterval(5 * 86400)
+        let load = Array(repeating: (power: 0.8, cpu: 0.25), count: 360) + Array(repeating: (power: 5.0, cpu: 1.5), count: 40)
+        func run(useBump: Double, ambient: Bool) -> Bool {
+            var c = config; c.thermalAmbientEnabled = ambient
+            let samples = offsetMinutes(fit, start: start, load: load) { i in 1.8 + (i >= 360 ? useBump : 0) + (i % 2 == 0 ? 0.2 : -0.2) }
+            return replay(ThermalDetector(fit: fit), samples, config: c, track: true).any
+        }
+        XCTAssertTrue(run(useBump: 2, ambient: false), "without the room offset this is the false alarm")
+        XCTAssertFalse(run(useBump: 2, ambient: true))
+        XCTAssertTrue(run(useBump: 8, ambient: true), "cooling far worse than the room explains is still caught")
+    }
+
+    /// An open incident must not become the room offset: its minutes are excluded, so eight hours of
+    /// blocked cooling stay flagged. Without the exclusion the offset would creep up and hide it.
+    func testOpenIncidentIsNotAbsorbedAsRoom() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        let start = t0.addingTimeInterval(5 * 86400)
+        let samples = offsetMinutes(fit, start: start, load: Array(repeating: (power: 0.8, cpu: 0.25), count: 120 + 480)) { i in i >= 120 ? 6 : 0 }
+        XCTAssertFalse(replay(ThermalDetector(fit: fit), samples, config: config, track: true).last.isEmpty)
+        XCTAssertTrue(replay(ThermalDetector(fit: fit), samples, config: config, track: false).last.isEmpty,
+                      "control: unexcluded, the same excess is absorbed (up to the cap)")
+    }
+
+    /// A fault already present when Smolder starts has no incident to exclude it; the cap keeps it visible.
+    func testRoomOffsetIsCapped() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        let start = t0.addingTimeInterval(5 * 86400)
+        let samples = offsetMinutes(fit, start: start, load: Array(repeating: (power: 0.8, cpu: 0.25), count: 480)) { _ in 8 }
+        let detector = ThermalDetector(fit: fit)
+        XCTAssertFalse(replay(detector, samples, config: config, track: false).last.isEmpty)
+        XCTAssertEqual(detector.ambientOffset(at: samples.last!.timestamp.addingTimeInterval(60), config: config), config.thermalAmbientMaxOffset, accuracy: 1e-9)
+    }
+
     func testPowerOnlyFitFromOlderVersionStillLoads() throws {
         let json = #"{"base":24,"resistance":1.35,"tau":3,"residualMAD":1,"powerP95":8.8,"minutes":4337,"fittedAt":0}"#
         let fit = try JSONDecoder().decode(ThermalFit.self, from: Data(json.utf8))

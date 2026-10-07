@@ -44,9 +44,29 @@ This is the standard first-order thermal model used for mobile SoCs, server room
 residual-based fault detection on top. Because it models physics rather than workload, a new kind of
 work does not need relearning.
 
+### The room
+
+The model has no ambient term, and the room moves more than the alert band: on the Mac this was built on,
+the idle residual swung from −2.8 °C at dawn to +2.7 °C on a warm afternoon. Judged against the bare model,
+every warm afternoon plus a little use read as a cooling problem.
+
+So the residual is judged relative to a **room offset**: the median residual over the last 6 hours, ending
+20 minutes ago (one sustain period, so the minutes being judged are not part of it). It needs at least a
+quarter of that window, otherwise the offset is 0. Three things keep it from swallowing a real fault:
+
+- minutes inside an open or past incident never enter it, so once an anomaly is flagged the offset stays
+  where it was before;
+- it is capped at ±4 °C, so a fault that was already there when Smolder started still shows;
+- the fixed limits (thermal pressure, battery 35 °C) do not use it.
+
+A slow fault that builds up over many hours without ever crossing the band can be absorbed; that is the
+trade-off for not alarming every afternoon.
+
+### When it alerts
+
 An alert needs:
 
-- a residual above `max(3 °C, 4 × MAD)`, where MAD is the residual spread on the fit data,
+- a residual minus the room offset above `max(3 °C, 4 × MAD)`, where MAD is the residual spread on the fit data,
 - in at least 80 % of the last 20 minutes,
 - at a power level the model has actually seen (≤ 1.25 × the 95th percentile of the fit data). Beyond
   that the linear model is extrapolating, so Smolder does not judge.
@@ -87,7 +107,7 @@ These never adapt:
 
 ## Guarding against learning a fault
 
-- Time ranges of past and open incidents are excluded from every fit and baseline.
+- Time ranges of past and open incidents are excluded from every fit and baseline, including the room offset.
 - A program's buckets are marked anomalous while it is under an incident.
 - The first full-window thermal fit is frozen as a reference. If later fits drift more than 20 % in
   steady-state resistance (`R + Rslow`) or 8 °C in `base`, Smolder tells you once a week instead of silently accepting it. (It cannot tell a

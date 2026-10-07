@@ -39,7 +39,7 @@ So Smolder does not ask *"is it hot?"*. It asks *"is it hotter than what it is d
 |---|---|---|
 | **Runaway program** | A program uses far more CPU than *its own* usual peak (≥ 0.5 cores and ≥ 1.5× its 14-day peak) for 30 minutes | A compiler or AI agent that is busy every day is not flagged; a daemon that normally idles and suddenly burns a core is |
 | **Busy in the background** | With every screen off, the *quietest* moments of the last two hours draw ≥ 1.5 W more than usual | Real work raises the power *peaks*; something that never stops raises the *floor*. A lit screen raises it too, so this is not judged while the Mac is in use |
-| **Hotter than the load explains** | The chip runs ≥ 3 °C (or 4 residual MADs) above what the current power draw predicts, for 20 minutes | A learned power → temperature model: heavy work that runs hot is expected; a blocked vent or a hot room is not |
+| **Hotter than the load explains** | The chip runs ≥ 3 °C (or 4 residual MADs) above what the current power draw predicts, for 20 minutes, after correcting for the room over the last few hours | A learned power → temperature model: heavy work that runs hot is expected, and so is a warm afternoon; a blocked vent is not |
 | **Hard limits** | macOS throttles for 10 minutes, critical thermal pressure, or battery ≥ 35 °C | Never learned, never adapted — the backstop for anything the baselines could absorb |
 
 Each alert is one notification when it starts and one when it resolves, never a stream. Every message says
@@ -110,8 +110,9 @@ Then open *Settings → General* and turn on **Start at login and restart after 
 ## Limitations
 
 - Apple Silicon only. Intel Macs expose different sensors.
-- No ambient temperature sensor: a hotter room and worse cooling look the same. Smolder says so in the
-  message instead of guessing.
+- No ambient temperature sensor. Smolder estimates the room from the last few hours (capped at ±4 °C) so a
+  warm afternoon is not reported as a cooling problem, but a slow fault building over many hours can be
+  absorbed the same way, and a hot room beyond the cap still looks like worse cooling.
 - The first 72 hours are a learning period; until then only conservative fixed rules apply.
 
 ## Contributing

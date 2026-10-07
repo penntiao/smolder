@@ -102,8 +102,11 @@ final class Monitor: ObservableObject {
         tracker = IncidentTracker(open: persisted.openIncidents, history: persisted.history)
         Localization.shared.apply(languageCode: config.general.language)
         // Re-seed the in-memory windows so a restart does not reset persistence counters to zero.
+        thermal.excluded = tracker.excludedRanges
+        for sample in store.samples(since: Date().addingTimeInterval(-ThermalDetector.memoryHours(config.detection) * 3600)) {
+            _ = thermal.observe(sample, config: config.detection)
+        }
         recentMinutes = store.samples(since: Date().addingTimeInterval(-3 * 3600))
-        for sample in recentMinutes { _ = thermal.observe(sample) }
         reconfigureNotifiers()
     }
 
@@ -183,7 +186,8 @@ final class Monitor: ObservableObject {
             thermalState: readings.map(\.3.rawValue).max() ?? 0,
             expectedDie: nil,
             screenOn: screens.isEmpty ? nil : screens.contains(true))
-        sample.expectedDie = thermal.observe(sample)
+        thermal.excluded = tracker.excludedRanges
+        sample.expectedDie = thermal.observe(sample, config: config.detection).map { $0 + thermal.ambientOffset(at: now, config: config.detection) }
 
         let covered = max(programCovered, 1)
         let programMinute = MinuteContext.ProgramMinute(
@@ -224,6 +228,7 @@ final class Monitor: ObservableObject {
             checkDrift(newFit, now: now)
         }
 
+        thermal.excluded = excluded
         let ctx = MinuteContext(now: now, minutes: recentMinutes, programs: recentPrograms, learning: learning, config: d)
         let runawayFindings = runaway.evaluate(ctx)
         var findings = runawayFindings
@@ -431,7 +436,7 @@ final class Monitor: ObservableObject {
         live.pressure = level
         live.fit = thermal.fit
         live.band = thermal.band(config.detection)
-        live.expectedDie = thermal.currentExpected
+        live.expectedDie = thermal.currentExpected(at: Date(), config: config.detection)
         let now = Date()
         live.learning = isLearning(now: now)
         if let first = store.firstSampleDate() {

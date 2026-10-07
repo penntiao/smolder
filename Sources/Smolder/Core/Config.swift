@@ -21,6 +21,9 @@ struct Config: Codable, Equatable {
         var thermalMinMargin: Double = 3.0       // °C, lower bound of the band
         var thermalMADMultiplier: Double = 4.0   // or this many residual MADs, whichever is larger
         var thermalSustainMinutes = 20
+        var thermalAmbientEnabled = true         // judge against the model plus a room offset
+        var thermalAmbientHours: Double = 6      // offset = median residual over this window
+        var thermalAmbientMaxOffset: Double = 4  // °C, cap so a room offset cannot hide a real fault
 
         // Runaway process: far above its own usual peak, sustained
         var runawayEnabled = true

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.4
+
+- Fix: "Running hotter than the load explains" fired on warm afternoons. The model has no ambient term and the
+  room swings more than the 3 °C band (idle residual −2.8 to +2.7 °C over a day on the author's Mac), so a
+  warm room plus half an hour of use read as a cooling problem. The residual is now judged against a room
+  offset — the median residual over the last 6 hours, ending one sustain period ago — capped at ±4 °C and
+  never fed by minutes inside an incident. Settings: `thermalAmbientEnabled`, `thermalAmbientHours`,
+  `thermalAmbientMaxOffset`.
+- The alert says how much of the expected temperature is room correction.
+
 ## 0.1.3
 
 - "Running hotter than the load explains" is less easily fooled by ordinary heavy use. The thermal model now
