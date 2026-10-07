@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- "Running hotter than the load explains" is less easily fooled by ordinary heavy use. The thermal model now
+  adds a 60-minute power term (heat soaking into a fanless chassis) and a CPU term (at the same system watts,
+  CPU work heats the die more than a lit screen or video). On real data this cut the residual spread by a
+  third and removed a bias of ±2.5 °C that tracked CPU share.
+- Fits saved by 0.1.x still load and are replaced by the new model at the next start; a drift reference
+  from the old model is reset rather than compared.
+
 ## 0.1.2
 
 - Fix: "Busy in the background" fired whenever someone used the Mac for two hours — a lit screen alone keeps

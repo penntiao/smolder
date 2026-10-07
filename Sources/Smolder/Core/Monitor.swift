@@ -250,11 +250,13 @@ final class Monitor: ObservableObject {
     /// A slowly drifting model can quietly absorb a real problem. Compare against a frozen reference
     /// (the first fit with a full baseline window) and say so when the physics changed noticeably.
     private func checkDrift(_ fit: ThermalFit, now: Date) {
+        // A reference from the power-only model (0.1.x) has a different R; start over with this one.
+        if persisted.referenceFit?.model != ThermalFit.currentModel { persisted.referenceFit = nil }
         guard let reference = persisted.referenceFit else {
             if Double(fit.minutes) >= config.detection.baselineDays * 1440 * 0.5 { persisted.referenceFit = fit }
             return
         }
-        let resistanceChange = reference.resistance > 0.1 ? fit.resistance / reference.resistance - 1 : 0
+        let resistanceChange = reference.steadyResistance > 0.1 ? fit.steadyResistance / reference.steadyResistance - 1 : 0
         let baseChange = fit.base - reference.base
         guard resistanceChange > 0.2 || baseChange > 8 else { return }
         if let last = persisted.lastDriftNotice, now.timeIntervalSince(last) < 7 * 86400 { return }
@@ -262,8 +264,8 @@ final class Monitor: ObservableObject {
         let event = SmolderEvent(kind: .thermalAnomaly, severity: .info,
                                  title: L("Cooling has drifted from its reference"),
                                  lines: [L("Now %@ °C/W and %@ at idle; reference %@ °C/W and %@",
-                                           String(format: "%.1f", fit.resistance), Format.celsius(fit.base),
-                                           String(format: "%.1f", reference.resistance), Format.celsius(reference.base)),
+                                           String(format: "%.1f", fit.steadyResistance), Format.celsius(fit.base),
+                                           String(format: "%.1f", reference.steadyResistance), Format.celsius(reference.base)),
                                          L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor")],
                                  incidentID: UUID().uuidString, startedAt: now)
         Task { await outbox.enqueue(event); await flushOutbox() }
@@ -429,7 +431,7 @@ final class Monitor: ObservableObject {
         live.pressure = level
         live.fit = thermal.fit
         live.band = thermal.band(config.detection)
-        live.expectedDie = thermal.fit.flatMap { fit in thermal.smoothedPower.map { fit.expected(smoothedPower: $0) } }
+        live.expectedDie = thermal.currentExpected
         let now = Date()
         live.learning = isLearning(now: now)
         if let first = store.firstSampleDate() {

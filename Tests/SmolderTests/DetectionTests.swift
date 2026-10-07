@@ -82,7 +82,7 @@ final class DetectionTests: XCTestCase {
 
     func testThermalFitRecoversPhysics() throws {
         let fit = try XCTUnwrap(ThermalModel.fit(syntheticHistory(days: 4), excluded: [], minimumMinutes: 1000))
-        XCTAssertEqual(fit.resistance, 4, accuracy: 0.4)
+        XCTAssertEqual(fit.steadyResistance, 4, accuracy: 0.4)
         XCTAssertEqual(fit.base, 30, accuracy: 1)
         XCTAssertEqual(fit.tau, 3, accuracy: 1)
         XCTAssertLessThan(fit.residualMAD, 0.6)
@@ -138,6 +138,73 @@ final class DetectionTests: XCTestCase {
         let clean = try XCTUnwrap(ThermalModel.fit(history, excluded: [range], minimumMinutes: 1000))
         XCTAssertEqual(all.minutes - clean.minutes, 240, "the incident's minutes are left out")
         XCTAssertEqual(clean.base, 30, accuracy: 1)
+    }
+
+    /// A fanless Mac with a display: the die runs on a fast power term, a chassis heat-soak term (60 min)
+    /// and a CPU term — at the same system watts, CPU work heats the die more than a lit screen or video.
+    private func mixedMinutes(start: Date, load: [(power: Double, cpu: Double)], soak: Double = 1, seed: UInt64 = 11) -> [MinuteSample] {
+        var fast = load[0].power, slow = load[0].power, cpu = load[0].cpu
+        var rng = SeededRandom(seed: seed)
+        return load.enumerated().map { i, l in
+            fast += (1 - exp(-1 / 3.0)) * (l.power - fast)
+            slow += (1 - exp(-1 / 60.0)) * (l.power - slow)
+            cpu += (1 - exp(-1 / 3.0)) * (l.cpu - cpu)
+            let die = 24 + soak * (0.6 * fast + 0.5 * slow + 2.0 * cpu) + rng.next(in: -0.4...0.4)
+            return MinuteSample(timestamp: start.addingTimeInterval(Double(i) * 60), dieMax: die + 6, dieAvg: die, ssd: 30, battery: 26,
+                                power: l.power, cpuCores: l.cpu, thermalState: 0, expectedDie: nil)
+        }
+    }
+
+    /// Four days of ordinary use, like this Mac's: lid-closed idle, two hours of video (screen and GPU,
+    /// little CPU), a short CPU-heavy burst, a long evening of mostly light work with some heavier stretches.
+    private func mixedHistory(days: Int) -> [MinuteSample] {
+        let day: [(power: Double, cpu: Double)] = (0..<1440).map { m in
+            switch m {
+            case 540..<660: return (power: 8.5, cpu: 0.6)                          // video
+            case 660..<675: return (power: 9, cpu: 3.2)                            // short build
+            case 1080..<1260: return m % 40 < 30 ? (power: 7, cpu: 0.9) : (power: 9, cpu: 2.4)
+            default: return (power: 0.5, cpu: 0.3)
+            }
+        }
+        return mixedMinutes(start: t0, load: Array(repeating: day, count: days).flatMap { $0 })
+    }
+
+    func testThermalFitSeparatesCPUAndHeatSoak() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        XCTAssertEqual(fit.model, ThermalFit.currentModel)
+        XCTAssertEqual(fit.base, 24, accuracy: 1)
+        XCTAssertEqual(fit.steadyResistance, 1.1, accuracy: 0.25)
+        XCTAssertEqual(fit.cpuCoefficient, 2.0, accuracy: 0.5)
+        XCTAssertLessThan(fit.residualMAD, 0.4)
+    }
+
+    /// 2026-10-07 afternoon: an hour and a half of CPU-heavy work (3 cores, 9 W) on a warm, fanless Mac.
+    /// The die climbed to 45 °C against 36 °C predicted from power alone; nothing was wrong with cooling.
+    /// The same load with cooling 40 % worse must still be caught.
+    func testLongCPUHeavyWorkIsNotFlaggedButWorseCoolingIs() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        let start = t0.addingTimeInterval(5 * 86400)
+        let load = Array(repeating: (power: 0.5, cpu: 0.3), count: 60) + Array(repeating: (power: 9.0, cpu: 3.0), count: 90)
+        func findings(soak: Double) -> [Finding] {
+            let detector = ThermalDetector(fit: fit)
+            let samples = mixedMinutes(start: start, load: load, soak: soak, seed: 3)
+            var last: [Finding] = [], any: [Finding] = []
+            for (i, s) in samples.enumerated() {
+                _ = detector.observe(s)
+                last = detector.evaluate(MinuteContext(now: s.timestamp, minutes: Array(samples[...i]), programs: [], learning: false, config: config))
+                any += last
+            }
+            return any
+        }
+        XCTAssertTrue(findings(soak: 1).isEmpty)
+        XCTAssertEqual(Set(findings(soak: 1.4).map(\.key)), ["thermal"])
+    }
+
+    func testPowerOnlyFitFromOlderVersionStillLoads() throws {
+        let json = #"{"base":24,"resistance":1.35,"tau":3,"residualMAD":1,"powerP95":8.8,"minutes":4337,"fittedAt":0}"#
+        let fit = try JSONDecoder().decode(ThermalFit.self, from: Data(json.utf8))
+        XCTAssertEqual(fit.model, 1)
+        XCTAssertEqual(fit.expected(ThermalInput(power: 8, slowPower: 8, cpu: 3)), 24 + 1.35 * 8, accuracy: 1e-9)
     }
 
     // MARK: idle power floor

@@ -177,7 +177,7 @@ private struct DetectionTab: View {
                 }
                 if let fit = s.fit {
                     LabeledContent(L("Thermal model"), value: L("%@ at idle, +%@ °C per watt, %@ min lag",
-                                                                 Format.celsius(fit.base), String(format: "%.1f", fit.resistance), String(format: "%.0f", fit.tau)))
+                                                                 Format.celsius(fit.base), String(format: "%.1f", fit.steadyResistance), String(format: "%.0f", fit.tau)))
                     LabeledContent(L("Learned from"), value: Format.duration(Double(fit.minutes) * 60))
                 }
             }

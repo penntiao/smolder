@@ -157,8 +157,8 @@ final class PowerFloorDetector {
 /// buried under something. High temperature under heavy load is expected and never flagged here.
 final class ThermalDetector {
     private(set) var fit: ThermalFit?
-    private var filter = PowerFilter()
-    private(set) var smoothedPower: Double?
+    private var filter = ThermalFilter()
+    private(set) var input: ThermalInput?
     private var residuals: [(Date, Double)] = []
     private var lastFitAttempt: Date?
 
@@ -177,14 +177,16 @@ final class ThermalDetector {
 
     /// Feeds the minute and returns the expected die temperature, if the model has one.
     func observe(_ sample: MinuteSample) -> Double? {
-        guard let fit else { _ = filter.update(power: sample.power, at: sample.timestamp, tau: 3); return nil }
-        smoothedPower = filter.update(power: sample.power, at: sample.timestamp, tau: fit.tau)
-        guard let p = smoothedPower else { return nil }
-        let expected = fit.expected(smoothedPower: p)
+        guard let fit else { _ = filter.update(sample, tau: 3); return nil }
+        input = filter.update(sample, tau: fit.tau)
+        guard let input else { return nil }
+        let expected = fit.expected(input)
         if let die = sample.dieAvg { residuals.append((sample.timestamp, die - expected)) }
         residuals.removeAll { sample.timestamp.timeIntervalSince($0.0) > 3 * 3600 }
         return expected
     }
+
+    var currentExpected: Double? { fit.flatMap { fit in input.map { fit.expected($0) } } }
 
     func band(_ config: Config.Detection) -> Double? {
         guard let fit else { return nil }
@@ -193,16 +195,16 @@ final class ThermalDetector {
 
     func evaluate(_ ctx: MinuteContext) -> [Finding] {
         let c = ctx.config
-        guard c.thermalEnabled, !ctx.learning, let fit, let band = band(c), let power = smoothedPower,
+        guard c.thermalEnabled, !ctx.learning, let fit, let band = band(c), let input,
               let latest = ctx.minutes.last, let die = latest.dieAvg else { return [] }
         // Outside the power range the model has really seen, its prediction is a guess: do not judge.
-        guard power <= fit.powerP95 * 1.25 + 0.5 else { return [] }
+        guard input.power <= fit.powerP95 * 1.25 + 0.5 else { return [] }
         let recent = residuals.filter { ctx.now.timeIntervalSince($0.0) < Double(c.thermalSustainMinutes) * 60 + 30 }
         guard recent.count >= c.thermalSustainMinutes,
               recent.filter({ $0.1 > band }).count >= Int(Double(c.thermalSustainMinutes) * 0.8) else { return [] }
-        let expected = fit.expected(smoothedPower: power)
+        let expected = fit.expected(input)
         var lines = [
-            L("Die %@, expected %@ ± %@ at %@", Format.celsius(die), Format.celsius(expected), String(format: "%.0f", band), Format.watts(power)),
+            L("Die %@, expected %@ ± %@ at %@", Format.celsius(die), Format.celsius(expected), String(format: "%.0f", band), Format.watts(input.power)),
             L("%@ hotter than the load explains for %@", String(format: "%.0f°", die - expected), Format.duration(Double(c.thermalSustainMinutes) * 60)),
         ]
         if let top = ctx.topProgramsLine(lastMinutes: c.thermalSustainMinutes) { lines.append(top) }

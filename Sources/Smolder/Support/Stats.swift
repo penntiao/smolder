@@ -33,6 +33,33 @@ enum Stats {
         let b = sxy / sxx
         return (my - b * mx, b)
     }
+
+    /// Ordinary least squares for y = c₀ + c₁·x₁ + … via the normal equations (Gaussian elimination with
+    /// partial pivoting). Nil when the inputs are collinear or there are too few points.
+    static func multipleLinearFit(rows: [[Double]], y: [Double]) -> [Double]? {
+        let k = (rows.first?.count ?? 0) + 1
+        guard rows.count == y.count, rows.count > k else { return nil }
+        var a = Array(repeating: Array(repeating: 0.0, count: k + 1), count: k)
+        for (row, yi) in zip(rows, y) {
+            let x = [1.0] + row
+            for i in 0..<k {
+                for j in 0..<k { a[i][j] += x[i] * x[j] }
+                a[i][k] += x[i] * yi
+            }
+        }
+        let scale = (0..<k).map { max(1, a[$0][$0]) }
+        for col in 0..<k {
+            guard let pivot = (col..<k).max(by: { abs(a[$0][col]) < abs(a[$1][col]) }) else { return nil }
+            // Relative to the diagonal's scale, so a constant input (zero variance) counts as collinear.
+            guard abs(a[pivot][col]) > 1e-9 * scale[col] else { return nil }
+            a.swapAt(col, pivot)
+            for r in 0..<k where r != col {
+                let f = a[r][col] / a[col][col]
+                for c in col...k { a[r][c] -= f * a[col][c] }
+            }
+        }
+        return (0..<k).map { a[$0][k] / a[$0][$0] }
+    }
 }
 
 import SQLite3

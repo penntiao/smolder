@@ -20,13 +20,25 @@ Smolder splits the question into three that stay stable when the workload change
 ## 1. Is the chip hotter than its power draw explains?
 
 ```
-expected die temperature = base + R × P̃
+expected die temperature = base + R × P̃ + Rslow × P̃slow + k × C̃
 ```
 
 `P̃` is the system power passed through a first-order low-pass filter with time constant `τ`, mimicking the
-chip's thermal inertia. `base`, `R` (°C per watt) and `τ` are fitted once a day from the last 14 days by
-least squares, after dropping points more than 3 robust standard deviations out (one refit). `τ` is chosen
-from 1, 2, 3, 5, 8 and 13 minutes by smallest residual spread.
+chip's thermal inertia. `P̃slow` is the same power through a 60-minute filter: a fanless Mac keeps warming
+for an hour of sustained work as heat soaks into the chassis, long after the chip itself has settled. `C̃` is
+CPU usage in cores through the fast filter. System power includes the display and the rest of the board, so
+at the same total watts a CPU-heavy load puts more of them into the die than a lit screen or video does; the
+CPU term accounts for that.
+
+`base`, `R`, `Rslow`, `k` and `τ` are fitted once a day from the last 14 days by least squares, after
+dropping points more than 3 robust standard deviations out (one refit). Coefficients are kept non-negative
+(more load never cools the chip); an input whose coefficient comes out negative had no usable range in the
+data and is left out. `τ` is chosen from 1, 2, 3, 5, 8 and 13 minutes by smallest residual spread.
+
+On the Mac this was built on, adding the slow and CPU terms cut the residual spread from 1.15 °C to 0.76 °C
+and explained a day of mixed use — idle, video, hours of work — within ±2 °C. The power-only model's error
+swung with CPU share: about 2.4 °C too warm on light-CPU loads and 2.6 °C too cool on CPU-heavy ones at the
+same watts.
 
 This is the standard first-order thermal model used for mobile SoCs, server rooms and battery packs, with
 residual-based fault detection on top. Because it models physics rather than workload, a new kind of
@@ -78,7 +90,7 @@ These never adapt:
 - Time ranges of past and open incidents are excluded from every fit and baseline.
 - A program's buckets are marked anomalous while it is under an incident.
 - The first full-window thermal fit is frozen as a reference. If later fits drift more than 20 % in
-  `R` or 8 °C in `base`, Smolder tells you once a week instead of silently accepting it. (It cannot tell a
+  steady-state resistance (`R + Rslow`) or 8 °C in `base`, Smolder tells you once a week instead of silently accepting it. (It cannot tell a
   hotter room from worse cooling — there is no ambient sensor — and says so.)
 - *Accept as normal* on an incident is an explicit choice: it closes the incident and lets its data be
   learned from.
