@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Fix: a short burst was reported as a runaway program. The rule judged only the 30-minute average, so ten
+  minutes at 1.4 cores read as "0.54 cores on average for 30 min" — iCloud's `fileproviderd` syncing a 5 GB
+  copy into Documents, which stopped by itself. A program must now also be over the line in 80 % of the
+  window's minutes. One that burns in pulses rather than steadily is flagged once 60 minutes average above
+  the line. Nothing the new rule flags would have gone unflagged before.
+
 ## 0.1.5
 
 - Each minute records the P-core cluster's power (SMC `PP0b`, no root; new `cpu_power` column), and

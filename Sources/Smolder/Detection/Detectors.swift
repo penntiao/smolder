@@ -50,7 +50,13 @@ struct MinuteContext {
 /// Flags a program using far more CPU than *it* usually does, for a sustained period.
 /// A daemon that normally idles and suddenly burns a core stands out immediately; a compiler or an AI
 /// agent that is busy every day does not, because its own history already contains busy periods.
+///
+/// "Sustained" is checked minute by minute, not just on the window average: ten minutes at 1.4 cores
+/// averages 0.5 over half an hour (iCloud's fileproviderd after a 5 GB copy into Documents), yet it was
+/// over the line for a third of the window. A program that burns in pulses rather than steadily still
+/// counts once twice the window averages above the line.
 final class RunawayDetector {
+    static let steadyFraction = 0.8
     private var usualPeaks: [String: Double] = [:]
     private var peaksLoadedAt: Date?
 
@@ -71,6 +77,8 @@ final class RunawayDetector {
         let window = ctx.programs.suffix(sustain)
         guard window.count >= sustain else { return [] }
 
+        let long = ctx.programs.suffix(2 * sustain)
+
         var sums: [String: Double] = [:], presence: [String: Int] = [:]
         for m in window {
             for (path, cores) in m.cores { sums[path, default: 0] += cores; presence[path, default: 0] += 1 }
@@ -86,7 +94,17 @@ final class RunawayDetector {
             let threshold = ctx.learning ? c.runawayLearningFloorCores : max(c.runawayFloorCores, c.runawayPeakMultiplier * peak)
             guard average > threshold else { continue }
 
-            var lines = [L("Using %@ cores on average for %@", Format.cores(average), Format.duration(Double(sustain) * 60))]
+            var span = sustain, spanAverage = average
+            let overMinutes = window.filter { ($0.cores[path] ?? 0) > threshold }.count
+            if Double(overMinutes) < Double(sustain) * Self.steadyFraction {
+                guard long.count >= 2 * sustain,
+                      long.filter({ $0.cores[path] != nil }).count >= Int(Double(2 * sustain) * 0.8) else { continue }
+                spanAverage = long.reduce(0) { $0 + ($1.cores[path] ?? 0) } / Double(2 * sustain)
+                guard spanAverage > threshold else { continue }
+                span = 2 * sustain
+            }
+
+            var lines = [L("Using %@ cores on average for %@", Format.cores(spanAverage), Format.duration(Double(span) * 60))]
             if ctx.learning {
                 lines.append(L("Still learning what is normal on this Mac"))
             } else if peak < 0.05 {

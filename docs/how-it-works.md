@@ -93,10 +93,15 @@ Every 10 minutes Smolder stores each program's average CPU use (by executable pa
 *usual peak* is the 99th percentile of those buckets over 14 days, excluding buckets recorded while that
 program was part of an incident.
 
-A program is flagged when its 30-minute average exceeds `max(0.5 cores, 1.5 × usual peak)` and it was
-present for at least 80 % of that window. A daemon that normally idles has a usual peak near zero, so a
-stuck loop at one core is flagged after 30 minutes. A program that is busy every day is judged against its
-own busy days.
+A program is flagged when its 30-minute average exceeds `max(0.5 cores, 1.5 × usual peak)`, it was
+present for at least 80 % of that window, and it was over that line in at least 80 % of the window's
+minutes. A daemon that normally idles has a usual peak near zero, so a stuck loop at one core is flagged
+within 30 minutes. A program that is busy every day is judged against its own busy days.
+
+The per-minute check is there because an average hides its shape: ten minutes at 1.4 cores averages 0.5
+over half an hour. That is what iCloud's `fileproviderd` did after a 5 GB copy into a synced Documents
+folder, and it stopped on its own. A program that burns in pulses rather than steadily — two minutes busy,
+three idle — is still flagged once twice the window (60 minutes) averages above the line.
 
 Independently, the **idle power floor** — the 10th percentile of the last 120 minutes of power — is compared
 with its 14-day median. Real work raises the peaks; something that never stops raises the quiet moments

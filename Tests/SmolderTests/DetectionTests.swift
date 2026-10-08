@@ -61,6 +61,54 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(detector.evaluate(burning).count, 1)
     }
 
+    private func programs(path: String, cores: [Double]) -> [MinuteContext.ProgramMinute] {
+        cores.enumerated().map { i, c in
+            MinuteContext.ProgramMinute(timestamp: t0.addingTimeInterval(Double(i) * 60), cores: [path: c],
+                                        names: [path: (path as NSString).lastPathComponent], pids: [path: 100])
+        }
+    }
+
+    /// Every minute of the series is judged as it arrives, like the app does.
+    private func runawayMinutes(_ series: [MinuteContext.ProgramMinute]) -> [Int] {
+        let detector = RunawayDetector()
+        return (1...series.count).filter { n in
+            !detector.evaluate(MinuteContext(now: series[n - 1].timestamp.addingTimeInterval(60), minutes: [],
+                                             programs: Array(series.prefix(n)), learning: false, config: config)).isEmpty
+        }
+    }
+
+    /// 2026-10-08: a 5 GB backup copied into iCloud-synced Documents kept fileproviderd at 1.4 cores for about
+    /// ten minutes. Over half an hour that averages above 0.5 cores, and 0.1.5 reported it as running away for
+    /// 30 minutes. It was over the line for a third of the window and stopped by itself.
+    func testShortBurstIsNotRunaway() {
+        let path = "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+        for burst in [Array(repeating: 1.38, count: 10), Array(repeating: 3.0, count: 4) + Array(repeating: 0.3, count: 6)] {
+            let cores = Array(repeating: 0.005, count: 10) + Array(repeating: 0.125, count: 10) + burst
+                + Array(repeating: 0.25, count: 10) + Array(repeating: 0.005, count: 60)
+            let series = programs(path: path, cores: cores)
+            let windowAverages = (30...cores.count).map { cores[($0 - 30)..<$0].reduce(0, +) / 30 }
+            XCTAssertGreaterThan(windowAverages.max()!, 0.5, "the 30-minute average alone would have flagged it")
+            XCTAssertEqual(runawayMinutes(series), [])
+        }
+    }
+
+    func testPulsingBurnerIsFlaggedOverTwiceTheWindow() {
+        // Two minutes at two cores, three nearly idle, over and over: 0.83 cores on average, never steady
+        let cores = (0..<90).map { $0 % 5 < 2 ? 2.0 : 0.05 }
+        let flagged = runawayMinutes(programs(path: "/usr/libexec/stuckd", cores: cores))
+        XCTAssertEqual(flagged.first, 60, "not steady within 30 minutes; flagged once 60 minutes average above the line")
+        let finding = RunawayDetector().evaluate(MinuteContext(now: t0.addingTimeInterval(3600), minutes: [],
+                                                               programs: programs(path: "/usr/libexec/stuckd", cores: Array(cores.prefix(60))),
+                                                               learning: false, config: config)).first
+        XCTAssertEqual(finding?.lines.first, L("Using %@ cores on average for %@", Format.cores(0.83), Format.duration(3600)))
+    }
+
+    func testSteadyBurnerIsStillFlaggedWithinTheWindow() {
+        let cores = Array(repeating: 0.005, count: 30) + Array(repeating: 1.0, count: 40)
+        XCTAssertEqual(runawayMinutes(programs(path: "/System/Library/appstoreagent", cores: cores)).first, 54,
+                       "flagged once 24 of the last 30 minutes were over the line")
+    }
+
     // MARK: thermal model
 
     /// Synthetic chip: 30 °C at idle, +4 °C per watt, 3-minute lag, ±0.5 °C noise, with daily heavy work.
