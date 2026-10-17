@@ -14,6 +14,11 @@ import Foundation
 /// the same core count at a low clock. Where a Mac has no such sensor, or too little history with it, the fit
 /// leaves that term out (model 2). Physics does not change when the workload does, so this baseline survives "this month the
 /// Mac does different work" — unlike a baseline on temperature itself.
+///
+/// A room-referenced fit predicts the die's rise over the room instead of the die itself, with the room estimated from
+/// the battery (see `ThermalFilter`); its `base` is then the idle rise over the room. Only the drift check uses it: the
+/// room is cooler or warmer for weeks at a time, and a fit on the die alone puts that into `R` whenever the warm days
+/// happen to be the busy ones.
 struct ThermalFit: Codable, Equatable {
     static let currentModel = 3
     static let slowTau: Double = 60
@@ -30,11 +35,13 @@ struct ThermalFit: Codable, Equatable {
     var minutes: Int            // minutes of data used
     var fittedAt: Date
     var model: Int              // 1 = power-only (0.1.0–0.1.2), 2 = no P-core power term, 3 = with it
+    var roomReferenced: Bool    // predicts die minus the estimated room, not the die
 
     init(base: Double, resistance: Double, tau: Double, slowResistance: Double = 0, cpuCoefficient: Double = 0,
          cpuPowerCoefficient: Double = 0,
-         residualMAD: Double, residualP95: Double? = nil, powerP95: Double, minutes: Int, fittedAt: Date, model: Int = ThermalFit.currentModel) {
-        self.residualP95 = residualP95
+         residualMAD: Double, residualP95: Double? = nil, powerP95: Double, minutes: Int, fittedAt: Date, model: Int = ThermalFit.currentModel,
+         roomReferenced: Bool = false) {
+        self.residualP95 = residualP95; self.roomReferenced = roomReferenced
         self.base = base; self.resistance = resistance; self.tau = tau
         self.slowResistance = slowResistance; self.cpuCoefficient = cpuCoefficient; self.cpuPowerCoefficient = cpuPowerCoefficient
         self.residualMAD = residualMAD; self.powerP95 = powerP95; self.minutes = minutes
@@ -55,6 +62,7 @@ struct ThermalFit: Codable, Equatable {
         minutes = try c.decode(Int.self, forKey: .minutes)
         fittedAt = try c.decode(Date.self, forKey: .fittedAt)
         model = try c.decodeIfPresent(Int.self, forKey: .model) ?? 1
+        roomReferenced = try c.decodeIfPresent(Bool.self, forKey: .roomReferenced) ?? false
     }
 
     /// °C per watt once the chassis has fully soaked: what drift checks and the settings pane compare.
@@ -72,6 +80,7 @@ struct ThermalInput: Equatable {
     var slowPower: Double
     var cpu: Double
     var cpuPower: Double? = nil
+    var room: Double? = nil     // estimated room temperature (battery at the last quiet minute)
 }
 
 enum ThermalModel {
@@ -81,6 +90,13 @@ enum ThermalModel {
     /// same minutes, by this factor — the term exists for the few minutes the other inputs get badly wrong,
     /// which a median-based spread never sees — and must not widen the typical error.
     static let cpuPowerTailGain = 0.9
+
+    /// Steady-state resistance up more than 20 %, or the idle temperature up more than 8 °C (3 °C over the room for
+    /// room-referenced fits, whose idle rise is a fraction of a degree to begin with).
+    static func hasDrifted(_ fit: ThermalFit, from reference: ThermalFit) -> Bool {
+        let resistanceChange = reference.steadyResistance > 0.1 ? fit.steadyResistance / reference.steadyResistance - 1 : 0
+        return resistanceChange > 0.2 || fit.base - reference.base > (fit.roomReferenced ? 3 : 8)
+    }
 
     /// Robust fit over the given minutes. Minutes inside `excluded` (open or past incidents) are ignored,
     /// so an anomaly is never learned as normal. With enough minutes that carry P-core power, model 3 is fitted
@@ -101,7 +117,14 @@ enum ThermalModel {
         return fit(samples, excluded: excluded, minimumMinutes: minimumMinutes, now: now, useCPUPower: false)
     }
 
-    private static func fit(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], minimumMinutes: Int, now: Date, useCPUPower: Bool) -> ThermalFit? {
+    /// Model 2 on the die's rise over the estimated room, for the drift check. Minutes with no room estimate yet are
+    /// left out; nil on a Mac without a battery. Always model 2, so that two of these fits compare like with like.
+    static func roomFit(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], minimumMinutes: Int, now: Date = Date()) -> ThermalFit? {
+        fit(samples, excluded: excluded, minimumMinutes: minimumMinutes, now: now, useCPUPower: false, room: true)
+    }
+
+    private static func fit(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], minimumMinutes: Int, now: Date, useCPUPower: Bool,
+                            room: Bool = false) -> ThermalFit? {
         var best: ThermalFit?
         for tau in tauCandidates {
             var xs: [ThermalInput] = [], ys: [Double] = []
@@ -115,10 +138,13 @@ enum ThermalModel {
                 if restarted { warmup = Int(tau * 3) }
                 if warmup > 0 { warmup -= 1; continue }
                 if excluded.contains(where: { $0.contains(s.timestamp) }) { continue }
+                if room, input.room == nil { continue }
                 xs.append(input)
-                ys.append(die)
+                ys.append(die - (room ? input.room! : 0))
             }
-            guard xs.count >= minimumMinutes, let candidate = robustFit(x: xs, y: ys, tau: tau, useCPUPower: useCPUPower, now: now) else { continue }
+            guard xs.count >= minimumMinutes,
+                  var candidate = robustFit(x: xs, y: ys, tau: tau, useCPUPower: useCPUPower, now: now) else { continue }
+            candidate.roomReferenced = room
             if best == nil || candidate.residualMAD < best!.residualMAD { best = candidate }
         }
         return best
@@ -172,9 +198,19 @@ enum ThermalModel {
 }
 
 /// Keeps the filtered load current, minute by minute, for both fitting and the live prediction.
+///
+/// It also carries the room estimate. A fanless Mac's battery sits close to the room once the Mac has been near idle for
+/// a while, and is warmed by the chassis otherwise; so the estimate is the battery reading of the last quiet minute
+/// (both filtered powers at most `quietPower`), held through busy stretches, and dropped after `roomMaxAge` without one.
+/// The slow filter (60 min) only falls under the line well after a busy stretch ends, by when the battery has cooled.
+/// The room survives a gap: it does not change because the Mac slept.
 struct ThermalFilter {
+    static let quietPower: Double = 1.0
+    static let roomMaxAge: TimeInterval = 86400
+
     private(set) var value: ThermalInput?
     private var last: Date?
+    private var room: (temperature: Double, at: Date)?
 
     mutating func reset() { value = nil }
 
@@ -189,7 +225,7 @@ struct ThermalFilter {
         last = sample.timestamp
         guard let current = value else {
             value = ThermalInput(power: power, slowPower: power, cpu: sample.cpuCores ?? 0, cpuPower: sample.cpuPower)
-            return value
+            return withRoom(sample)
         }
         let fast = 1 - exp(-1 / tau), slow = 1 - exp(-1 / ThermalFit.slowTau)
         let cpu = sample.cpuCores ?? current.cpu
@@ -201,6 +237,16 @@ struct ThermalFilter {
         value = ThermalInput(power: current.power + fast * (power - current.power),
                              slowPower: current.slowPower + slow * (power - current.slowPower),
                              cpu: current.cpu + fast * (cpu - current.cpu), cpuPower: cpuPower)
-        return value
+        return withRoom(sample)
+    }
+
+    private mutating func withRoom(_ sample: MinuteSample) -> ThermalInput? {
+        guard var input = value else { return nil }
+        if let battery = sample.battery, input.power <= Self.quietPower, input.slowPower <= Self.quietPower {
+            room = (battery, sample.timestamp)
+        }
+        if let room, sample.timestamp.timeIntervalSince(room.at) <= Self.roomMaxAge { input.room = room.temperature }
+        value = input
+        return input
     }
 }

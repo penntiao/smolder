@@ -226,7 +226,7 @@ final class Monitor: ObservableObject {
         powerFloor.refreshBaseline(store: store, excluded: excluded, config: d, now: now)
         if let newFit = thermal.refitIfDue(store: store, excluded: excluded, config: d, now: now) {
             persisted.fit = newFit
-            checkDrift(newFit, now: now)
+            checkDrift(newFit, excluded: excluded, now: now)
         }
 
         thermal.excluded = excluded
@@ -255,25 +255,46 @@ final class Monitor: ObservableObject {
 
     /// A slowly drifting model can quietly absorb a real problem. Compare against a frozen reference
     /// (the first fit with a full baseline window) and say so when the physics changed noticeably.
-    private func checkDrift(_ fit: ThermalFit, now: Date) {
-        // A reference from the power-only model (0.1.x) has a different R; start over with this one.
-        if persisted.referenceFit?.model != fit.model { persisted.referenceFit = nil }
-        guard let reference = persisted.referenceFit else {
-            if Double(fit.minutes) >= config.detection.baselineDays * 1440 * 0.5 { persisted.referenceFit = fit }
+    /// Where the Mac has a battery the comparison is between room-referenced fits, so that a room that has
+    /// turned colder over the window — while the warm days were the busy ones — does not read as worse cooling.
+    private func checkDrift(_ fit: ThermalFit, excluded: [ClosedRange<Date>], now: Date) {
+        let d = config.detection
+        let window = d.baselineDays * 86400
+        let minimum = Int(d.learningHours * 60 * 0.5)
+        func roomFit(endingAt end: Date) -> ThermalFit? {
+            let samples = store.samples(since: end.addingTimeInterval(-window)).filter { $0.timestamp < end }
+            return ThermalModel.roomFit(samples, excluded: excluded, minimumMinutes: minimum, now: end)
+        }
+        let current = roomFit(endingAt: now) ?? fit
+        if let reference = persisted.referenceFit,
+           reference.roomReferenced != current.roomReferenced || reference.model != current.model {
+            // A reference of another kind has a different R. Refit the window it was frozen on, so the comparison
+            // keeps its anchor in time; where that is not possible, start over with this one.
+            persisted.referenceFit = current.roomReferenced ? roomFit(endingAt: reference.fittedAt) : nil
+        }
+        guard let reference = persisted.referenceFit,
+              Double(reference.minutes) >= d.baselineDays * 1440 * 0.5 else {
+            persisted.referenceFit = Double(current.minutes) >= d.baselineDays * 1440 * 0.5 ? current : nil
             return
         }
-        let resistanceChange = reference.steadyResistance > 0.1 ? fit.steadyResistance / reference.steadyResistance - 1 : 0
-        let baseChange = fit.base - reference.base
-        guard resistanceChange > 0.2 || baseChange > 8 else { return }
+        guard ThermalModel.hasDrifted(current, from: reference) else { return }
         if let last = persisted.lastDriftNotice, now.timeIntervalSince(last) < 7 * 86400 { return }
         persisted.lastDriftNotice = now
+        let lines: [String]
+        if current.roomReferenced {
+            lines = [L("Now %@ °C/W and %@ above the room at idle; reference %@ °C/W and %@",
+                       String(format: "%.1f", current.steadyResistance), String(format: "%.1f°", current.base),
+                       String(format: "%.1f", reference.steadyResistance), String(format: "%.1f°", reference.base)),
+                     L("The room is estimated from the battery while the Mac is idle")]
+        } else {
+            lines = [L("Now %@ °C/W and %@ at idle; reference %@ °C/W and %@",
+                       String(format: "%.1f", current.steadyResistance), Format.celsius(current.base),
+                       String(format: "%.1f", reference.steadyResistance), Format.celsius(reference.base)),
+                     L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor")]
+        }
         let event = SmolderEvent(kind: .thermalAnomaly, severity: .info,
                                  title: L("Cooling has drifted from its reference"),
-                                 lines: [L("Now %@ °C/W and %@ at idle; reference %@ °C/W and %@",
-                                           String(format: "%.1f", fit.steadyResistance), Format.celsius(fit.base),
-                                           String(format: "%.1f", reference.steadyResistance), Format.celsius(reference.base)),
-                                         L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor")],
-                                 incidentID: UUID().uuidString, startedAt: now)
+                                 lines: lines, incidentID: UUID().uuidString, startedAt: now)
         Task { await outbox.enqueue(event); await flushOutbox() }
     }
 

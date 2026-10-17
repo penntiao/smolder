@@ -316,6 +316,71 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(detector.ambientOffset(at: samples.last!.timestamp.addingTimeInterval(60), config: config), config.thermalAmbientMaxOffset, accuracy: 1e-9)
     }
 
+    // MARK: drift against the room
+
+    /// A fanless Mac in a room whose temperature changes from day to day. The die sits on the room plus the mixed-load
+    /// physics; the battery follows the room, warmed by the chassis while the Mac is busy (+0.8 °C per slow watt).
+    private func roomDays(start: Date, days: [(room: Double, busy: Bool)], soak: Double = 1, battery: Bool = true) -> [MinuteSample] {
+        let busyDay: [(power: Double, cpu: Double)] = (0..<1440).map { m in
+            switch m {
+            case 540..<660: return (power: 8.5, cpu: 0.6)
+            case 1080..<1260: return m % 40 < 30 ? (power: 7, cpu: 0.9) : (power: 9, cpu: 2.4)
+            default: return (power: 0.5, cpu: 0.3)
+            }
+        }
+        let idleDay = Array(repeating: (power: 0.5, cpu: 0.3), count: 1440)
+        let load = days.flatMap { $0.busy ? busyDay : idleDay }
+        var slow = load[0].power
+        return mixedMinutes(start: start, load: load, soak: soak).enumerated().map { i, s in
+            var s = s
+            let room = days[i / 1440].room
+            slow += (1 - exp(-1 / 60.0)) * (load[i].power - slow)
+            s.dieAvg! += room - 24
+            s.battery = battery ? room + 0.8 * slow : nil
+            return s
+        }
+    }
+
+    /// 2026-10-17: the busy days were the warm ones (room ~24 °C), then the Mac sat idle for a week as the room cooled
+    /// to ~19 °C. Fitted on the die alone, the window read 20 % worse cooling; measured against the room it must not.
+    func testColderIdleWeekDoesNotReadAsWorseCooling() throws {
+        let warmBusy = Array(repeating: (room: 24.0, busy: true), count: 7)
+        let coldIdle = Array(repeating: (room: 19.0, busy: false), count: 7)
+        let reference = roomDays(start: t0, days: warmBusy)
+        let window = roomDays(start: t0, days: warmBusy + coldIdle)
+        let plainReference = try XCTUnwrap(ThermalModel.fit(reference, excluded: [], minimumMinutes: 1000))
+        let plain = try XCTUnwrap(ThermalModel.fit(window, excluded: [], minimumMinutes: 1000))
+        XCTAssertTrue(ThermalModel.hasDrifted(plain, from: plainReference), "the die alone mistakes the colder room for worse cooling")
+        let roomReference = try XCTUnwrap(ThermalModel.roomFit(reference, excluded: [], minimumMinutes: 1000))
+        let room = try XCTUnwrap(ThermalModel.roomFit(window, excluded: [], minimumMinutes: 1000))
+        XCTAssertTrue(room.roomReferenced)
+        XCTAssertEqual(room.steadyResistance, 1.1, accuracy: 0.25)
+        XCTAssertFalse(ThermalModel.hasDrifted(room, from: roomReference))
+    }
+
+    /// Cooling 40 % worse in a room that changes on its own must still read as drift.
+    func testWorseCoolingStillDriftsAgainstTheRoom() throws {
+        let rooms: [Double] = [22, 25, 20, 23, 24, 19, 21]
+        let reference = try XCTUnwrap(ThermalModel.roomFit(roomDays(start: t0, days: rooms.map { ($0, true) }),
+                                                           excluded: [], minimumMinutes: 1000))
+        let later = roomDays(start: t0.addingTimeInterval(7 * 86400), days: rooms.reversed().map { ($0, true) }, soak: 1.4)
+        let current = try XCTUnwrap(ThermalModel.roomFit(later, excluded: [], minimumMinutes: 1000))
+        XCTAssertTrue(ThermalModel.hasDrifted(current, from: reference))
+    }
+
+    /// The room is the battery at the last quiet minute, held through busy stretches; no battery, no room fit.
+    func testRoomEstimateHoldsThroughLoadAndNeedsABattery() throws {
+        var filter = ThermalFilter()
+        let samples = roomDays(start: t0, days: [(room: 22, busy: true)])
+        var rooms: [Double?] = []
+        for s in samples { rooms.append(filter.update(s, tau: 3)?.room) }
+        XCTAssertEqual(rooms[539] ?? 0, 22.4, accuracy: 0.1, "quiet morning: battery at the room plus the idle warmth")
+        XCTAssertEqual(rooms[650] ?? 0, rooms[539] ?? 0, "held while busy, though the battery is warmer by then")
+        XCTAssertGreaterThan(samples[650].battery!, 24)
+        XCTAssertNil(ThermalModel.roomFit(roomDays(start: t0, days: Array(repeating: (room: 22, busy: true), count: 4), battery: false),
+                                          excluded: [], minimumMinutes: 1000))
+    }
+
     // MARK: P-core power
 
     /// Like `mixedMinutes`, plus the P-core cluster's own power: at the same busy cores, a build that pins the

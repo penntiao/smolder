@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.7
+
+- Fix: "Cooling has drifted from its reference" fired because the room had cooled. A week of use at about
+  24 °C followed by a week idle at about 19 °C made the fit on the die alone read 20 % more °C per watt
+  (1.31 → 1.58): the warm days were the busy ones. On a Mac with a battery, the drift check now compares fits
+  of the die's rise over the room, with the room taken from the battery at the last quiet minute (both
+  filtered powers ≤ 1 W) and held through busy stretches. On the same history they moved 13 %. A reference
+  saved by an earlier version is refitted this way on its own window; the idle limit for these fits is
+  3 °C over the room. The live "hotter than the load explains" judgement is unchanged.
+
 ## 0.1.6
 
 - Fix: a short burst was reported as a runaway program. The rule judged only the 30-minute average, so ten

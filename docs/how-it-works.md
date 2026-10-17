@@ -129,8 +129,20 @@ These never adapt:
 - Time ranges of past and open incidents are excluded from every fit and baseline, including the room offset.
 - A program's buckets are marked anomalous while it is under an incident.
 - The first full-window thermal fit is frozen as a reference. If later fits drift more than 20 % in
-  steady-state resistance (`R + Rslow`) or 8 °C in `base`, Smolder tells you once a week instead of silently accepting it. (It cannot tell a
-  hotter room from worse cooling — there is no ambient sensor — and says so.)
+  steady-state resistance (`R + Rslow`), Smolder tells you once a week instead of silently accepting it.
+  The room changes over weeks too, and a fit on the die alone puts that into `R` whenever the warm days
+  happen to be the busy ones (on the author's Mac: a week of use at about 24 °C, then a week idle as the
+  room cooled to about 19 °C, read as 20 % worse cooling). So where the Mac has a battery, the drift check
+  compares separate fits of the die's rise *over the room*, with the same inputs (model 2). The room is the
+  battery temperature at the last quiet minute — both filtered powers at most 1 W, so the chassis has
+  cooled — held through busy stretches and dropped after 24 hours without a quiet minute. A fanless Mac's
+  battery sits within about a degree of the room when idle; a constant offset ends up in `base`, which is
+  then the idle rise over the room and drifts if it grows by more than 3 °C. On the week above, these
+  fits moved 13 % (1.16 → 1.31 °C/W) against 20 % for the die alone. A reference saved by an older
+  version is refitted this way on the window it was frozen on. Without a battery the check uses the
+  ordinary fit and an 8 °C limit on `base`, and says it cannot tell a hotter room from worse cooling.
+  The live judgement keeps the ordinary fit and the room offset above: its band comes from the fit's
+  spread, and fitted against the room that spread shrinks enough to make ordinary use read as too hot.
 - *Accept as normal* on an incident is an explicit choice: it closes the incident and lets its data be
   learned from.
 - Hard limits are the backstop for anything the adaptive parts miss.

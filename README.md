@@ -112,7 +112,8 @@ Then open *Settings → General* and turn on **Start at login and restart after 
 - Apple Silicon only. Intel Macs expose different sensors.
 - No ambient temperature sensor. Smolder estimates the room from the last few hours (capped at ±4 °C) so a
   warm afternoon is not reported as a cooling problem, but a slow fault building over many hours can be
-  absorbed the same way, and a hot room beyond the cap still looks like worse cooling.
+  absorbed the same way, and a hot room beyond the cap still looks like worse cooling. The weekly drift
+  check measures against the room as estimated from the battery while the Mac idles (Macs with a battery only).
 - The first 72 hours are a learning period; until then only conservative fixed rules apply.
 
 ## Contributing

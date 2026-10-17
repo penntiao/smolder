@@ -121,3 +121,5 @@
 "macOS notifications" = "macOS 通知";
 "macOS reports critical thermal pressure" = "系统报告严重热压力";
 "since %@" = "自 %@ 起";
+"Now %@ °C/W and %@ above the room at idle; reference %@ °C/W and %@" = "现在每瓦 %@ °C、空闲时比室温高 %@；参照为每瓦 %@ °C、高 %@";
+"The room is estimated from the battery while the Mac is idle" = "室温按 Mac 空闲时的电池温度估算";
