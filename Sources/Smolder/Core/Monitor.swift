@@ -266,6 +266,8 @@ final class Monitor: ObservableObject {
             return ThermalModel.roomFit(samples, excluded: excluded, minimumMinutes: minimum, now: end)
         }
         let current = roomFit(endingAt: now) ?? fit
+        // Too few quiet minutes this time: skip the check rather than drop a room-referenced reference.
+        if persisted.referenceFit?.roomReferenced == true, !current.roomReferenced { return }
         if let reference = persisted.referenceFit,
            reference.roomReferenced != current.roomReferenced || reference.model != current.model {
             // A reference of another kind has a different R. Refit the window it was frozen on, so the comparison

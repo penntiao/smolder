@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8
+
+- Fix: when a room-referenced fit could not be made (too few quiet minutes in the window), the drift check fell
+  back to the ordinary fit and, the kinds differing, dropped the room-referenced reference. It now skips that
+  check and keeps the reference.
+
 ## 0.1.7
 
 - Fix: "Cooling has drifted from its reference" fired because the room had cooled. A week of use at about
