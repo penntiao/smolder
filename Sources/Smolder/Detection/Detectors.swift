@@ -187,6 +187,8 @@ final class ThermalDetector {
     private var lastFitAttempt: Date?
     /// Incident spans (set by the caller each minute); their residuals are kept out of the room offset.
     var excluded: [ClosedRange<Date>] = []
+    /// A Mac with fans gets told to check them: a stopped or clogged fan is the likeliest cooling fault there.
+    var hasFans = false
 
     /// How far back the in-memory residuals must reach.
     static func memoryHours(_ config: Config.Detection) -> Double { max(3, config.thermalAmbientHours) }
@@ -266,7 +268,8 @@ final class ThermalDetector {
             lines.append(L("Includes %@ for the room over the last %@", String(format: "%+.1f°", offset), Format.duration(c.thermalAmbientHours * 3600)))
         }
         if let top = ctx.topProgramsLine(lastMinutes: c.thermalSustainMinutes) { lines.append(top) }
-        lines.append(L("Check airflow around the Mac and the room temperature"))
+        lines.append(hasFans ? L("Check that the fan spins and the vents are clear, and the room temperature")
+                             : L("Check airflow around the Mac and the room temperature"))
         return [Finding(key: "thermal", kind: .thermalAnomaly, severity: .warning,
                         title: L("Running hotter than its workload explains"), lines: lines)]
     }

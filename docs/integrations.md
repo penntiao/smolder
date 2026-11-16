@@ -57,6 +57,9 @@ that should only receive heartbeats.
 }
 ```
 
+Readings the Mac does not have are left out: `battery` on a Mac without one (Mac mini, Mac Studio), `fanRPM`
+(the fastest fan) on a fanless MacBook Air.
+
 A changed `bootTime` means the Mac restarted. A non-zero `pendingDeliveries` with `deliveryErrors` that
 persist means alerts are not getting out (for example Telegram is unreachable) — worth alerting on from
 the receiving side.

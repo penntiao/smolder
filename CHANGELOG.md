@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- Any Apple Silicon Mac, not only a MacBook with its lid closed. At launch Smolder reads what the hardware
+  has — a lid, a battery, fans, the model name — and shows it in *Settings → Detection → This Mac* and in
+  `--probe`. Where there is no battery (Mac mini, Mac Studio) the battery tile, its hard limit and the
+  learning-period note about it are gone; where there are fans the panel and `/status` show the fastest one's
+  speed, each minute records it (new `fan_rpm` column, `fanRPM` in heartbeats), and a heat alert says to check
+  that the fan spins. Fan speed is not a thermal-model input: a stopped fan would then explain its own heat.
+- `/status` leaves out readings the Mac does not have instead of showing them as "–".
+- New tagline and README: Mac minis on a shelf and closed MacBooks alike, a table of what each kind of Mac
+  gets, and a five-minute setup (Telegram bot, keeping the Mac awake). Mac mini and Mac Studio support has
+  not yet been tried on real hardware; please send `--probe` output.
+
 ## 0.1.9
 
 - Fix: "Cooling has drifted from its reference" kept firing every week though cooling had not changed. Two

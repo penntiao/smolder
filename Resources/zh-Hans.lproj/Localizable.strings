@@ -29,7 +29,7 @@
 "Battery is too warm" = "电池温度过高";
 "Bearer token (optional)" = "Bearer token（可选）";
 "Bot token from @BotFather" = "从 @BotFather 拿到的机器人 token";
-"Catch your Mac smoldering while the lid is closed." = "合着盖子，也能抓住你的 Mac 在悄悄发烧。";
+"Catch your Mac smoldering while nobody is watching." = "没人看着的时候，也能抓住你的 Mac 在悄悄发烧。";
 "Chat ID" = "对话 ID";
 "Check airflow around the Mac and the room temperature" = "检查 Mac 周围是否通风、室温是否过高";
 "Includes %@ for the room over the last %@" = "已按近 %2$@的室温修正 %1$@";
@@ -127,3 +127,15 @@
 "Only minutes with the lid closed are compared" = "只比较合盖时的分钟";
 "Only minutes with the lid open are compared" = "只比较开盖时的分钟";
 "The room is estimated from the battery while the Mac is idle" = "室温按 Mac 空闲时的电池温度估算";
+"Until then only conservative fixed rules apply: a program burning close to a full core for an hour, macOS throttling." = "学习期内只用保守的固定规则：某个程序接近吃满一核持续一小时、系统因过热降频。";
+"Check that the fan spins and the vents are clear, and the room temperature" = "检查风扇是否在转、进出风口是否通畅、室温是否过高";
+"This Mac" = "这台 Mac";
+"Fan" = "风扇";
+"Fan %@" = "风扇 %@";
+"lid" = "有盖子";
+"no lid" = "没有盖子";
+"battery" = "有电池";
+"no battery" = "没有电池";
+"fanless" = "无风扇";
+"1 fan" = "1 个风扇";
+"%d fans" = "%d 个风扇";

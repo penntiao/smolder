@@ -40,6 +40,11 @@ enum Format {
         return String(format: "%.1f °C", value)
     }
 
+    static func rpm(_ value: Double?) -> String {
+        guard let value else { return "–" }
+        return String(format: "%.0f rpm", value)
+    }
+
     static func watts(_ value: Double?) -> String {
         guard let value else { return "–" }
         return value < 10 ? String(format: "%.1f W", value) : String(format: "%.0f W", value)

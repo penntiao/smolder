@@ -512,6 +512,47 @@ final class DetectionTests: XCTestCase {
         XCTAssertNil(ThermalModel.lidMask(samples, nil))
     }
 
+    // MARK: kinds of Mac
+
+    func testFanSpeedSurvivesStorage() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        for (i, rpm) in [1850.0, nil].enumerated() {
+            var s = minutes(1, start: t0.addingTimeInterval(Double(i) * 60), power: { _ in 4 }, die: { _ in 40 })[0]
+            s.fanRPM = rpm
+            store.append(s)
+        }
+        XCTAssertEqual(store.samples(since: t0).map(\.fanRPM), [1850, nil])
+    }
+
+    func testMachineSummaryNamesWhatTheMacHas() {
+        XCTAssertEqual(Machine(name: "Mac mini (2024)", identifier: "Mac16,10", hasLid: false, hasBattery: false, fans: 1).summary,
+                       "Mac mini (2024) · Mac16,10 · no lid · no battery · 1 fan")
+        XCTAssertEqual(Machine(name: nil, identifier: "Mac16,12", hasLid: true, hasBattery: true, fans: 0).summary,
+                       "Mac16,12 · lid · battery · fanless")
+    }
+
+    /// On a Mac with fans, the heat alert says to check them; on a fanless one, the airflow around it.
+    func testHeatAlertNamesTheFanOnlyWhereThereIsOne() throws {
+        let fit = try XCTUnwrap(ThermalModel.fit(mixedHistory(days: 4), excluded: [], minimumMinutes: 1000))
+        let load = Array(repeating: (power: 0.5, cpu: 0.3), count: 60) + Array(repeating: (power: 9.0, cpu: 3.0), count: 90)
+        let samples = mixedMinutes(start: t0.addingTimeInterval(5 * 86400), load: load, soak: 1.4, seed: 3)
+        func lines(fans: Bool) -> [String] {
+            let detector = ThermalDetector(fit: fit)
+            detector.hasFans = fans
+            var found: [String] = []
+            for (i, s) in samples.enumerated() {
+                _ = detector.observe(s)
+                let f = detector.evaluate(MinuteContext(now: s.timestamp, minutes: Array(samples[...i]), programs: [], learning: false, config: config))
+                if let first = f.first { found = first.lines }
+            }
+            return found
+        }
+        XCTAssertTrue(lines(fans: true).contains("Check that the fan spins and the vents are clear, and the room temperature"))
+        XCTAssertTrue(lines(fans: false).contains("Check airflow around the Mac and the room temperature"))
+    }
+
     func testLidStateSurvivesStorage() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -4,7 +4,7 @@
 
 <h1 align="center">Smolder</h1>
 
-<p align="center"><b>Catch your Mac smoldering while the lid is closed.</b></p>
+<p align="center"><b>Catch your Mac smoldering while nobody is watching.</b></p>
 
 <p align="center">
   <a href="https://github.com/penntiao/smolder/actions/workflows/ci.yml"><img src="https://github.com/penntiao/smolder/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -17,9 +17,9 @@
 
 ---
 
-Smolder is a small menu bar app for Macs that run all the time with nobody looking at them — a MacBook
-closed on a shelf as a home server, a build box, an always-on AI agent machine. It learns what *normal*
-looks like on your Mac and messages your phone when something is actually wrong.
+Smolder is a small menu bar app for Macs that run all the time with nobody looking at them — a Mac mini
+on a shelf as a home server, a MacBook with its lid closed, a build box, an always-on AI agent machine. It
+learns what *normal* looks like on your Mac and messages your phone when something is actually wrong.
 
 It was born from a real incident: a background daemon got stuck in a retry loop and burned a full CPU core
 for **eight hours** on a lid-closed MacBook Air. Nobody noticed. A temperature alarm would not have helped
@@ -39,8 +39,8 @@ So Smolder does not ask *"is it hot?"*. It asks *"is it hotter than what it is d
 |---|---|---|
 | **Runaway program** | A program uses far more CPU than *its own* usual peak (≥ 0.5 cores and ≥ 1.5× its 14-day peak) through most of 30 minutes, not just on average | A compiler or AI agent that is busy every day is not flagged; a daemon that normally idles and suddenly burns a core is |
 | **Busy in the background** | With every screen off, the *quietest* moments of the last two hours draw ≥ 1.5 W more than usual | Real work raises the power *peaks*; something that never stops raises the *floor*. A lit screen raises it too, so this is not judged while the Mac is in use |
-| **Hotter than the load explains** | The chip runs ≥ 3 °C (or 4 residual MADs) above what the current power draw (system and P-core cluster) predicts, for 20 minutes, after correcting for the room over the last few hours | A learned power → temperature model: heavy work that runs hot is expected, and so is a warm afternoon; a blocked vent is not |
-| **Hard limits** | macOS throttles for 10 minutes, critical thermal pressure, or battery ≥ 35 °C | Never learned, never adapted — the backstop for anything the baselines could absorb |
+| **Hotter than the load explains** | The chip runs ≥ 3 °C (or 4 residual MADs) above what the current power draw (system and P-core cluster) predicts, for 20 minutes, after correcting for the room over the last few hours | A learned power → temperature model: heavy work that runs hot is expected, and so is a warm afternoon; a stopped fan or a blocked vent is not |
+| **Hard limits** | macOS throttles for 10 minutes, critical thermal pressure, or (on a Mac with a battery) battery ≥ 35 °C | Never learned, never adapted — the backstop for anything the baselines could absorb |
 
 Each alert is one notification when it starts and one when it resolves, never a stream. Every message says
 what was measured, what was expected and who is likely behind it:
@@ -53,6 +53,21 @@ PID 4127 · /System/Library/PrivateFrameworks/…/appstoreagent
 ```
 
 How the models work, and the research behind them, is in [docs/how-it-works.md](docs/how-it-works.md).
+
+## Any Apple Silicon Mac
+
+Smolder reads what the hardware has and adapts to it; *Settings → Detection → This Mac* shows what it found.
+
+| | MacBook Air | MacBook Pro | Mac mini · Mac Studio |
+|---|---|---|---|
+| Chip, SSD temperature, power | ✓ | ✓ | ✓ |
+| Battery temperature and its limit | ✓ | ✓ | — |
+| Room estimated from the battery for the drift check | ✓ | ✓ | — (a hotter room looks like worse cooling) |
+| Lid open or closed (compared separately) | ✓ | ✓ | — |
+| Fan speed | — (fanless) | ✓ | ✓ |
+
+It is used every day on a MacBook Air (M4). Mac mini and Mac Studio support is new: if you run one, the output
+of `--probe` (see below) helps.
 
 ## Notifications
 
@@ -89,12 +104,28 @@ cd smolder
 scripts/build-app.sh --install
 ```
 
-Then open *Settings → General* and turn on **Start at login and restart after a crash**.
-
 > [!NOTE]
 > Smolder is ad-hoc signed, not notarized — that needs a paid Apple Developer account. The Homebrew cask
 > clears the quarantine flag after installing so macOS lets it start. If you would rather not trust a
-> binary, build it from source: it is about 2,500 lines of Swift.
+> binary, build it from source: it is about 3,300 lines of Swift.
+
+## Set up in five minutes
+
+1. Open Smolder (a flame appears in the menu bar), then *Settings → General* → turn on
+   **Start at login and restart after a crash**.
+2. **Telegram**: in Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot` and copy the token
+   it gives you. Paste it in *Settings → Notifications → Telegram*, send your new bot any message, then press
+   **Detect**. Smolder now messages you, and the bot answers `/status`.
+3. **Keep the Mac awake.** A Mac that sleeps is not being watched.
+   - Mac mini, Mac Studio: *System Settings → Energy* → turn on
+     **Prevent automatic sleeping when the display is off**.
+   - MacBook with the lid closed: macOS sleeps a closed MacBook unless an external display is attached.
+     Keep it on power and run `sudo pmset -a disablesleep 1` (undo with `0`), or use an app such as
+     Amphetamine.
+4. Optional: a dead man's switch (*Settings → Notifications → Dead man's switch*), so you also hear about it
+   when the Mac itself goes silent.
+
+For the first 72 hours Smolder learns what is normal on this Mac; only conservative fixed rules apply until then.
 
 ## Privacy and how it reads sensors
 
@@ -105,7 +136,7 @@ Then open *Settings → General* and turn on **Start at login and restart after 
   macOS could change them; `Smolder.app/Contents/MacOS/Smolder --probe` prints what your Mac exposes.
 - Data lives in `~/Library/Application Support/Smolder/`: a SQLite history (90 days), the learned model,
   and `secrets.json` (mode 0600) for tokens. Tokens are not in the Keychain because an ad-hoc signed app
-  would trigger a Keychain prompt after every update — and nobody is there to click it on a closed Mac.
+  would trigger a Keychain prompt after every update — and nobody is there to click it on an unattended Mac.
 
 ## Limitations
 
@@ -113,9 +144,12 @@ Then open *Settings → General* and turn on **Start at login and restart after 
 - No ambient temperature sensor. Smolder estimates the room from the last few hours (capped at ±4 °C) so a
   warm afternoon is not reported as a cooling problem, but a slow fault building over many hours can be
   absorbed the same way, and a hot room beyond the cap still looks like worse cooling. The weekly drift
-  check measures against the room as estimated from the battery while the Mac idles (Macs with a battery only).
+  check measures against the room as estimated from the battery while the Mac idles; a Mac without a battery
+  (Mac mini, Mac Studio) has no such estimate there.
 - The drift check can only judge cooling under load, on minutes of one lid state. A Mac that is almost always
   idle may go weeks without enough busy minutes to be judged.
+- Fan speed is shown and recorded but not judged on its own; a fan that stops shows up as the chip running
+  hotter than its load explains.
 - The first 72 hours are a learning period; until then only conservative fixed rules apply.
 
 ## Contributing

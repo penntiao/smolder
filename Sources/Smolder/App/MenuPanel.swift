@@ -15,7 +15,11 @@ struct MenuPanel: View {
                 Tile(label: L("Chip"), value: Format.celsius(s.dieMax),
                      note: s.expectedDie.map { L("expected %@", Format.celsius($0)) })
                 Tile(label: L("SSD"), value: Format.celsius(s.ssd), note: nil)
-                Tile(label: L("Battery"), value: Format.celsius(s.battery), note: nil)
+                if s.machine.hasBattery {
+                    Tile(label: L("Battery"), value: Format.celsius(s.battery), note: nil)
+                } else if s.machine.fans > 0 {
+                    Tile(label: L("Fan"), value: Format.rpm(s.fanRPM), note: nil)
+                }
             }
             TemperatureChart(samples: monitor.chart, band: s.band)
             Text(L("Power %@ · CPU %@ cores · Pressure %@", Format.watts(s.power), Format.cores(s.cpuCores ?? 0), s.pressure.label))

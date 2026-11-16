@@ -3,12 +3,23 @@
 Smolder samples sensors every 10 seconds and per-program CPU time every 30 seconds, aggregates them into
 one row per minute, and evaluates its detectors once a minute.
 
+## What kind of Mac
+
+At launch Smolder reads what the hardware has, without root: a lid (`AppleClamshellState` on `IOPMrootDomain`,
+which Apple's power-management header documents as absent on hardware without one), an internal battery
+(`IOPSCopyPowerSourcesInfo`), the number of fans (SMC `FNum`, absent on a fanless MacBook Air) and the model name
+(the device tree's `product-name`). The lid decides whether the drift check compares lid states separately;
+the battery gives the room estimate and its own hard limit; fans are shown (SMC `F<n>Ac`) and recorded, and a
+heat alert on a Mac with fans says to check them. Fan speed is deliberately not an input to the thermal model:
+a fan that stopped would then explain its own heat.
+
 ## Why not a temperature threshold
 
-The chip temperature of a fanless Apple Silicon Mac is mostly a function of power draw: macOS clamps
-sustained power (a 13" M4 MacBook Air settles around 8 W under load) and temperature follows. A threshold
-on temperature therefore measures *how much work the Mac is doing*, which is exactly the thing that changes
-from month to month. Tuned low, it fires on every compile; tuned high, it misses a stuck daemon burning
+The chip temperature of an Apple Silicon Mac is mostly a function of power draw. On a fanless MacBook Air
+macOS clamps sustained power (a 13" M4 settles around 8 W under load) and temperature follows; on a Mac with
+fans (MacBook Pro, Mac mini, Mac Studio) the fans spin up with the heat, which bends the curve but keeps it a
+function of power. A threshold on temperature therefore measures *how much work the Mac is doing*, which is
+exactly the thing that changes from month to month. Tuned low, it fires on every compile; tuned high, it misses a stuck daemon burning
 a single core, which barely moves the temperature.
 
 Baselines that learn the temperature itself (rolling means, seasonal models, clustering) have a second

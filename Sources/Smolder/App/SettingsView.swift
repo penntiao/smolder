@@ -172,9 +172,12 @@ private struct DetectionTab: View {
                 let s = monitor.live
                 if s.learning {
                     ProgressView(value: s.learningProgress) { Text(L("Learning what is normal on this Mac")) }
-                    Text(L("Until then only conservative fixed rules apply: a program burning close to a full core for an hour, macOS throttling, an over-hot battery."))
+                    Text(monitor.live.machine.hasBattery
+                         ? L("Until then only conservative fixed rules apply: a program burning close to a full core for an hour, macOS throttling, an over-hot battery.")
+                         : L("Until then only conservative fixed rules apply: a program burning close to a full core for an hour, macOS throttling."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                LabeledContent(L("This Mac"), value: monitor.live.machine.summary)
                 if let fit = s.fit {
                     LabeledContent(L("Thermal model"), value: L("%@ at idle, +%@ °C per watt, %@ min lag",
                                                                  Format.celsius(fit.base), String(format: "%.1f", fit.steadyResistance), String(format: "%.0f", fit.tau)))
@@ -217,8 +220,10 @@ private struct DetectionTab: View {
             Section(L("Hard limits (never learned)")) {
                 Stepper(L("Throttling for %d min", monitor.config.detection.pressureHeavyMinutes),
                         value: $monitor.config.detection.pressureHeavyMinutes, in: 1...60)
-                Stepper(L("Battery at %@", Format.celsiusPrecise(monitor.config.detection.batteryCeiling)),
-                        value: $monitor.config.detection.batteryCeiling, in: 30...45)
+                if monitor.live.machine.hasBattery {
+                    Stepper(L("Battery at %@", Format.celsiusPrecise(monitor.config.detection.batteryCeiling)),
+                            value: $monitor.config.detection.batteryCeiling, in: 30...45)
+                }
             }
         }
         .formStyle(.grouped)
@@ -233,7 +238,7 @@ private struct AboutTab: View {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 96, height: 96)
             Text("Smolder").font(.title.weight(.medium))
             Text(L("Version %@", AppInfo.version)).foregroundStyle(.secondary)
-            Text(L("Catch your Mac smoldering while the lid is closed.")).multilineTextAlignment(.center)
+            Text(L("Catch your Mac smoldering while nobody is watching.")).multilineTextAlignment(.center)
             Link("github.com/penntiao/smolder", destination: URL(string: "https://github.com/penntiao/smolder")!)
             Text(L("MIT License")).font(.caption).foregroundStyle(.secondary)
         }

@@ -43,6 +43,7 @@ struct StatusSnapshot: Codable, Equatable {
     var expectedDie: Double?
     var ssd: Double?
     var battery: Double?
+    var fanRPM: Double?
     var power: Double?
     var cpuCores: Double?
     var thermalState: Int

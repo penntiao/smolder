@@ -49,6 +49,29 @@ final class SMC {
         return value.isFinite ? Double(value) : nil
     }
 
+    /// Reads an unsigned integer key (`ui8 `, `ui16`, `ui32`, big-endian); nil if the key does not exist.
+    func uint(_ key: String) -> Int? {
+        guard let (type, bytes) = read(key), ["ui8 ", "ui16", "ui32"].contains(type), !bytes.isEmpty else { return nil }
+        return bytes.reduce(0) { $0 << 8 | Int($1) }
+    }
+
+    /// Number of fans (`FNum`); 0 where the key is missing, as on a fanless MacBook Air.
+    func fanCount() -> Int { uint("FNum") ?? 0 }
+
+    /// Actual speed of fan `index` in RPM (`F<n>Ac`): `flt ` on Apple Silicon, `fpe2` fixed point on older SMCs.
+    func fanRPM(_ index: Int) -> Double? {
+        guard let (type, bytes) = read("F\(index)Ac") else { return nil }
+        switch type {
+        case "flt " where bytes.count == 4:
+            let value = bytes.withUnsafeBytes { $0.load(as: Float.self) }
+            return value.isFinite && value >= 0 ? Double(value) : nil
+        case "fpe2" where bytes.count == 2:
+            return Double(Int(bytes[0]) << 6 | Int(bytes[1]) >> 2)
+        default:
+            return nil
+        }
+    }
+
     private func call(_ input: inout SMCParam) -> Bool {
         var output = SMCParam()
         var size = MemoryLayout<SMCParam>.stride

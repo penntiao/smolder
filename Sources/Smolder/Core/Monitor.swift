@@ -7,6 +7,7 @@ struct LiveState {
     var dieAvg: Double?
     var ssd: Double?
     var battery: Double?
+    var fanRPM: Double?          // fastest fan, where the Mac has fans
     var power: Double?
     var cpuCores: Double?
     var pressure: PressureLevel = .nominal
@@ -23,6 +24,19 @@ struct LiveState {
     var lastHeartbeat: Date?
     var heartbeatError: String?
     var telegramPollError: String?
+    var machine = Machine(name: nil, identifier: nil, hasLid: false, hasBattery: false, fans: 0)
+}
+
+/// One 10-second reading of every sensor.
+private struct Reading {
+    var temperatures: TemperatureReading
+    var power: Double?
+    var cpuCores: Double?
+    var pressure: PressureLevel
+    var screenOn: Bool?
+    var cpuPower: Double?
+    var lidClosed: Bool?
+    var fanRPM: Double?
 }
 
 /// Persisted between launches.
@@ -50,6 +64,7 @@ final class Monitor: ObservableObject {
     let store: HistoryStore
     private let hid = HIDTemperature()
     private let smc = SMC()
+    let machine: Machine
     private let cpu = CPULoad()
     private let pressure = ThermalPressure()
     private let processes = ProcessSampler()
@@ -64,7 +79,7 @@ final class Monitor: ObservableObject {
 
     // Current minute accumulators
     private var minuteStart = Monitor.minuteFloor(Date())
-    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel, Bool?, Double?, Bool?)] = []
+    private var readings: [Reading] = []
     private var programSeconds: [String: Double] = [:]
     private var programNames: [String: String] = [:]
     private var programPIDs: [String: (Int32, Double)] = [:]
@@ -93,6 +108,7 @@ final class Monitor: ObservableObject {
         self.passive = passive
         config = ConfigStore.load()
         store = try HistoryStore(url: Paths.history)
+        machine = Machine.detect(smc: smc)
         if let data = try? Data(contentsOf: Paths.state), let state = try? JSONDecoder.smolder.decode(PersistedState.self, from: data) {
             persisted = state
         } else {
@@ -100,6 +116,8 @@ final class Monitor: ObservableObject {
         }
         thermal = ThermalDetector(fit: persisted.fit)
         tracker = IncidentTracker(open: persisted.openIncidents, history: persisted.history)
+        thermal.hasFans = machine.fans > 0
+        live.machine = machine
         Localization.shared.apply(languageCode: config.general.language)
         // Re-seed the in-memory windows so a restart does not reset persistence counters to zero.
         thermal.excluded = tracker.excludedRanges
@@ -147,7 +165,10 @@ final class Monitor: ObservableObject {
     private func sampleSensors() {
         let temps = hid.read()
         let power = smc?.float("PSTR")
-        readings.append((temps, power, cpu.sample(), pressure.read(), ScreenState.isOn(), smc?.float(SMC.cpuPowerKey), LidState.isClosed()))
+        let fan = machine.fans > 0 ? (0..<machine.fans).compactMap { smc?.fanRPM($0) }.max() : nil
+        readings.append(Reading(temperatures: temps, power: power, cpuCores: cpu.sample(), pressure: pressure.read(),
+                                screenOn: ScreenState.isOn(), cpuPower: smc?.float(SMC.cpuPowerKey),
+                                lidClosed: machine.hasLid ? LidState.isClosed() : nil, fanRPM: fan))
     }
 
     private func sampleProcesses(now: Date) {
@@ -174,21 +195,22 @@ final class Monitor: ObservableObject {
         }
         guard !readings.isEmpty else { return }
 
-        let screens = readings.compactMap(\.4)
-        let lids = readings.compactMap(\.6)
+        let screens = readings.compactMap(\.screenOn)
+        let lids = readings.compactMap(\.lidClosed)
         var sample = MinuteSample(
             timestamp: start,
-            dieMax: readings.compactMap(\.0.dieMax).max(),
-            dieAvg: Stats.mean(readings.compactMap(\.0.dieAvg)),
-            ssd: readings.compactMap(\.0.ssd).max(),
-            battery: Stats.mean(readings.compactMap(\.0.battery)),
-            power: Stats.mean(readings.compactMap(\.1)),
-            cpuCores: Stats.mean(readings.compactMap(\.2)),
-            thermalState: readings.map(\.3.rawValue).max() ?? 0,
+            dieMax: readings.compactMap(\.temperatures.dieMax).max(),
+            dieAvg: Stats.mean(readings.compactMap(\.temperatures.dieAvg)),
+            ssd: readings.compactMap(\.temperatures.ssd).max(),
+            battery: Stats.mean(readings.compactMap(\.temperatures.battery)),
+            power: Stats.mean(readings.compactMap(\.power)),
+            cpuCores: Stats.mean(readings.compactMap(\.cpuCores)),
+            thermalState: readings.map(\.pressure.rawValue).max() ?? 0,
             expectedDie: nil,
             screenOn: screens.isEmpty ? nil : screens.contains(true),
-            cpuPower: Stats.mean(readings.compactMap(\.5)),
-            lidClosed: lids.isEmpty ? nil : !lids.contains(false))
+            cpuPower: Stats.mean(readings.compactMap(\.cpuPower)),
+            lidClosed: lids.isEmpty ? nil : !lids.contains(false),
+            fanRPM: Stats.mean(readings.compactMap(\.fanRPM)))
         thermal.excluded = tracker.excludedRanges
         sample.expectedDie = thermal.observe(sample, config: config.detection).map { $0 + thermal.ambientOffset(at: now, config: config.detection) }
 
@@ -260,7 +282,7 @@ final class Monitor: ObservableObject {
         let window = config.detection.baselineDays * 86400
         let store = self.store
         let (reference, outcome) = DriftCheck.run(
-            reference: persisted.referenceFit, fallback: fit, hasLid: LidState.isClosed() != nil, excluded: excluded,
+            reference: persisted.referenceFit, fallback: fit, hasLid: machine.hasLid, excluded: excluded,
             config: config.detection, now: now,
             window: { end in store.samples(since: end.addingTimeInterval(-window)).filter { $0.timestamp < end } })
         persisted.referenceFit = reference
@@ -354,7 +376,7 @@ final class Monitor: ObservableObject {
     }
 
     func snapshot() -> StatusSnapshot {
-        StatusSnapshot(dieMax: live.dieMax, expectedDie: live.expectedDie, ssd: live.ssd, battery: live.battery,
+        StatusSnapshot(dieMax: live.dieMax, expectedDie: live.expectedDie, ssd: live.ssd, battery: live.battery, fanRPM: live.fanRPM,
                        power: live.power, cpuCores: live.cpuCores, thermalState: live.pressure.rawValue,
                        learning: live.learning, openIncidents: live.openIncidents.map(\.title),
                        topProcesses: Array(live.topProcesses.prefix(5)),
@@ -366,7 +388,9 @@ final class Monitor: ObservableObject {
         var lines = ["🔥 <b>Smolder · \(escape(Host.current().localizedName ?? "Mac"))</b>"]
         var temps = L("Die %@", Format.celsius(s.dieMax))
         if let expected = s.expectedDie, let band = s.band { temps += L(" (expected %@ ± %@)", Format.celsius(expected), String(format: "%.0f", band)) }
-        temps += " · " + L("SSD %@", Format.celsius(s.ssd)) + " · " + L("Battery %@", Format.celsius(s.battery))
+        temps += " · " + L("SSD %@", Format.celsius(s.ssd))
+        if s.machine.hasBattery { temps += " · " + L("Battery %@", Format.celsius(s.battery)) }
+        if s.machine.fans > 0 { temps += " · " + L("Fan %@", Format.rpm(s.fanRPM)) }
         lines.append(temps)
         lines.append(L("Power %@ · CPU %@ cores · Pressure %@", Format.watts(s.power), Format.cores(s.cpuCores ?? 0), s.pressure.label))
         let top = s.topProcesses.prefix(3).filter { $0.cores >= 0.05 }.map { "\(escape($0.name)) \(Format.cores($0.cores))" }
@@ -436,16 +460,19 @@ final class Monitor: ObservableObject {
                                                   lines: [L("Using %@ cores on average for %@", Format.cores(0.98), Format.duration(1800)), L("Usually close to idle")],
                                                   programs: ["/appstoreagent"], openedAt: opened, lastAbnormalAt: now)],
                          recentIncidents: [], fit: nil, lastHeartbeat: now)
+        live.machine = Machine(name: "MacBook Air (13-inch, M4, 2025)", identifier: "Mac16,12", hasLid: true, hasBattery: true, fans: 0)
     }
 
     // MARK: - Helpers
 
     private func refreshLive() {
-        guard let (temps, power, cpuCores, level, _, _, _) = readings.last else { return }
+        guard let r = readings.last else { return }
+        let temps = r.temperatures, power = r.power, cpuCores = r.cpuCores, level = r.pressure
         live.dieMax = temps.dieMax
         live.dieAvg = temps.dieAvg
         live.ssd = temps.ssd
         live.battery = temps.battery
+        live.fanRPM = r.fanRPM
         live.power = power
         live.cpuCores = cpuCores
         live.pressure = level
