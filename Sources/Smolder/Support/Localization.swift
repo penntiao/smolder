@@ -40,6 +40,14 @@ enum Format {
         return String(format: "%.1f °C", value)
     }
 
+    /// Signed percentage of a fraction: 0.18 → "+18%".
+    static func percent(_ fraction: Double) -> String {
+        String(format: "%@%.0f%%", fraction >= 0 ? "+" : "−", abs(fraction) * 100)
+    }
+
+    /// Unsigned percentage of a fraction: 0.18 → "18%".
+    static func share(_ fraction: Double) -> String { String(format: "%.0f%%", abs(fraction) * 100) }
+
     static func rpm(_ value: Double?) -> String {
         guard let value else { return "–" }
         return String(format: "%.0f rpm", value)

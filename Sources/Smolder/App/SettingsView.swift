@@ -178,6 +178,10 @@ private struct DetectionTab: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 LabeledContent(L("This Mac"), value: monitor.live.machine.summary)
+                LabeledContent(L("Cooling"), value: s.coolingSummary)
+                if s.canAcceptCooling {
+                    Button(L("Accept as the new normal")) { monitor.acceptCooling() }
+                }
                 if let fit = s.fit {
                     LabeledContent(L("Thermal model"), value: L("%@ at idle, +%@ °C per watt, %@ min lag",
                                                                  Format.celsius(fit.base), String(format: "%.1f", fit.steadyResistance), String(format: "%.0f", fit.tau)))

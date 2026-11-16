@@ -52,6 +52,10 @@ Usually close to idle
 PID 4127 · /System/Library/PrivateFrameworks/…/appstoreagent
 ```
 
+Beyond the minute-by-minute alerts, Smolder learns week by week how well this Mac usually sheds heat under
+load. When cooling gets better — a stand under it, a cooler shelf — it learns that by itself after two weeks.
+When it gets worse it says so every week until you reply `/accept`; a slow fault cannot creep into "normal".
+
 How the models work, and the research behind them, is in [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Any Apple Silicon Mac
@@ -73,7 +77,8 @@ of `--probe` (see below) helps.
 
 - **macOS notifications** — for when someone is at the Mac.
 - **Telegram** — alerts to your chat, and the bot answers `/status` with live temperatures, load and the
-  busiest programs. *Settings → Notifications → Detect* finds your chat ID for you.
+  busiest programs, and `/accept` to take cooling it reported worse as the new normal.
+  *Settings → Notifications → Detect* finds your chat ID for you.
 - **Webhook** — POSTs JSON for every event (and, optionally, heartbeats).
 - **Custom command** — runs anything you like with the same JSON on stdin; relay to your own server over SSH,
   pipe to `ntfy`, write to a log.

@@ -367,7 +367,7 @@ final class DetectionTests: XCTestCase {
                                                            excluded: [], minimumMinutes: 1000))
         let later = roomDays(start: t0.addingTimeInterval(7 * 86400), days: rooms.reversed().map { ($0, true) }, soak: 1.4)
         let load = try XCTUnwrap(ThermalModel.loadDrift(later, excluded: [], reference: reference))
-        XCTAssertGreaterThan(load.ratio, ThermalModel.driftRatio)
+        XCTAssertGreaterThan(load.ratio, 1.2)
         XCTAssertEqual(load.ratio, 1.4, accuracy: 0.1)
     }
 
@@ -423,6 +423,17 @@ final class DetectionTests: XCTestCase {
         }
     }
 
+    /// Records every finished week of `samples` after the reference was frozen, as the app does after each daily refit.
+    private func learn(_ samples: [MinuteSample], reference: ThermalFit, baseline: CoolingBaseline? = nil) throws
+        -> (baseline: CoolingBaseline, changes: [CoolingBaseline.Change]) {
+        var baseline = baseline ?? CoolingBaseline(since: reference.fittedAt)
+        let now = try XCTUnwrap(samples.last).timestamp.addingTimeInterval(60)
+        let changes = baseline.catchUp(reference: reference, excluded: [], now: now) { from, to in
+            samples.filter { $0.timestamp >= from && $0.timestamp < to }
+        }
+        return (baseline, changes)
+    }
+
     /// 2026-10-20 ~ 11-07: the reference's busy minutes were mostly lid-open desk work, later ones lid-closed remote
     /// work; the same watts ran the die hotter with the lid closed, and the check reported it as worse cooling every
     /// week. Kept to lid-closed minutes on both sides, nothing has changed.
@@ -434,23 +445,24 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(anchor.lid, .closed, "most minutes were lid-closed")
 
         let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: remoteDay, count: 14).flatMap { $0 }, seed: 17)
-        let checked = try drift(later, reference: anchor)
-        guard case let .steady(load?) = checked.outcome else { return XCTFail("expected steady, got \(checked.outcome)") }
-        XCTAssertEqual(load.ratio, 1, accuracy: 0.1)
-        XCTAssertEqual(checked.reference, anchor)
+        let learned = try learn(later, reference: anchor)
+        XCTAssertEqual(learned.baseline.weeks.map(\.verdict), [.usual, .usual])
+        XCTAssertEqual(try XCTUnwrap(learned.baseline.weeks.last?.ratio), 1, accuracy: 0.1)
+        XCTAssertTrue(learned.changes.isEmpty)
+        XCTAssertEqual(try drift(later, reference: anchor).reference, anchor)
 
         // Control: the same history without the lid known reads as drift.
         let blind = { (s: [MinuteSample]) in s.map { var s = $0; s.lidClosed = nil; return s } }
         let mixedAnchor = try XCTUnwrap(ThermalModel.roomFit(blind(reference), excluded: [], minimumMinutes: 1000))
         let window = Array(blind(later).suffix(14 * 1440))
         let mixed = try XCTUnwrap(ThermalModel.loadDrift(window, excluded: [], reference: mixedAnchor))
-        XCTAssertGreaterThan(mixed.ratio, ThermalModel.driftRatio)
+        XCTAssertGreaterThan(mixed.ratio, 1.2)
     }
 
     /// 2026-11-14: two weeks of near-idle (95 % of minutes under 1.7 W). The window's watts term was set by idle minutes
     /// that warm a little more per watt than busy ones, and read 65 % worse than the reference. Too few busy minutes to
-    /// judge the load: skipped, the reference kept.
-    func testNearIdleWindowIsNotJudgedUnderLoad() throws {
+    /// judge a week: nothing is reported, and the reference is kept.
+    func testNearIdleWeeksAreNotJudgedUnderLoad() throws {
         let reference = lidMinutes(start: t0, load: Array(repeating: remoteDay, count: 14).flatMap { $0 })
         let anchor = try XCTUnwrap(try drift(reference, reference: nil).reference)
         let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: quietDay, count: 14).flatMap { $0 },
@@ -458,19 +470,120 @@ final class DetectionTests: XCTestCase {
         let window = Array(later.suffix(14 * 1440))
         let current = try XCTUnwrap(ThermalModel.roomFit(window, excluded: [], minimumMinutes: 1000, lid: .closed))
         XCTAssertGreaterThan(current.steadyResistance / anchor.steadyResistance, 1.2, "control: the fitted watts term reads as worse cooling")
+        let learned = try learn(later, reference: anchor)
+        XCTAssertEqual(learned.baseline.weeks.map(\.verdict), [.unjudged, .unjudged])
+        XCTAssertTrue(learned.changes.isEmpty)
         let checked = try drift(later, reference: anchor)
-        XCTAssertEqual(checked.outcome, .skipped)
+        if case .drifted = checked.outcome { XCTFail("the idle level did not rise by 3 °C") }
         XCTAssertEqual(checked.reference, anchor)
     }
 
-    /// Cooling 40 % worse under the same lid and the same kind of work is still reported.
-    func testWorseCoolingWithTheLidClosedStillDrifts() throws {
+    /// Cooling 40 % worse under the same lid and the same kind of work is reported the first week.
+    func testWorseCoolingWithTheLidClosedIsReported() throws {
         let reference = lidMinutes(start: t0, load: Array(repeating: remoteDay, count: 14).flatMap { $0 })
         let anchor = try XCTUnwrap(try drift(reference, reference: nil).reference)
-        let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: remoteDay, count: 14).flatMap { $0 },
+        let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: remoteDay, count: 7).flatMap { $0 },
                                            closedSoak: 1.4 * 1.4, seed: 23)
-        guard case let .drifted(_, load?) = try drift(later, reference: anchor).outcome else { return XCTFail("expected drift") }
-        XCTAssertEqual(load.ratio, 1.4, accuracy: 0.1)
+        let learned = try learn(later, reference: anchor)
+        guard case let .worse(week, level, _, _)? = learned.changes.first else { return XCTFail("expected a worse week") }
+        XCTAssertEqual(try XCTUnwrap(week.ratio) / level, 1.4, accuracy: 0.1)
+        XCTAssertEqual(learned.baseline.level, 1, "worse is never learned on its own")
+    }
+
+    /// The case this was built for (2026-11-17): a stand under the Mac cools it 20 %. Two weeks later that is the usual
+    /// level, with nothing reset; when the stand is taken away, the next week is reported.
+    func testStandIsLearnedAndItsRemovalReported() throws {
+        let reference = lidMinutes(start: t0, load: Array(repeating: remoteDay, count: 14).flatMap { $0 })
+        let anchor = try XCTUnwrap(try drift(reference, reference: nil).reference)
+        func weeks(_ count: Int, from day: Int, soak: Double, seed: UInt64) -> [MinuteSample] {
+            lidMinutes(start: t0.addingTimeInterval(Double(day) * 86400), load: Array(repeating: remoteDay, count: count * 7).flatMap { $0 },
+                       closedSoak: soak, seed: seed)
+        }
+        let before = weeks(2, from: 14, soak: 1.4, seed: 31)
+        let stand = weeks(2, from: 28, soak: 1.4 * 0.8, seed: 37)
+        let removed = weeks(1, from: 42, soak: 1.4, seed: 41)
+
+        var learned = try learn(reference + before + stand, reference: anchor)
+        XCTAssertEqual(learned.baseline.weeks.map(\.verdict), [.usual, .usual, .better, .better])
+        guard case let .improved(from, to)? = learned.changes.last else { return XCTFail("expected the stand to be learned") }
+        XCTAssertEqual(to / from, 0.8, accuracy: 0.05)
+        XCTAssertEqual(learned.baseline.level, to)
+
+        learned = try learn(reference + before + stand + removed, reference: anchor, baseline: learned.baseline)
+        guard case let .worse(week, level, _, _)? = learned.changes.last else { return XCTFail("expected the removal to be reported") }
+        XCTAssertEqual(try XCTUnwrap(week.ratio) / level, 1.25, accuracy: 0.07)
+        XCTAssertTrue(learned.baseline.canAccept)
+    }
+
+    // MARK: learned cooling baseline
+
+    private func load(_ ratio: Double) -> LoadDrift { LoadDrift(minutes: 300, measured: 5 * ratio, predicted: 5) }
+
+    private func record(_ ratios: [Double], into baseline: inout CoolingBaseline) -> [CoolingBaseline.Change] {
+        var changes: [CoolingBaseline.Change] = []
+        for r in ratios {
+            let start = t0.addingTimeInterval(Double(baseline.weeks.count) * CoolingBaseline.weekLength)
+            if let change = baseline.record(start: start, end: start.addingTimeInterval(CoolingBaseline.weekLength), load: load(r)) {
+                changes.append(change)
+            }
+        }
+        return changes
+    }
+
+    /// The alert line starts at +20 % and narrows as the usual weeks agree with each other.
+    func testAlertLineNarrowsAsUsualWeeksAgree() {
+        var baseline = CoolingBaseline(since: t0)
+        XCTAssertEqual(baseline.alertBand, 0.2, accuracy: 1e-9)
+        _ = record([1.0, 1.02, 0.98, 1.01, 0.99, 1.02, 0.98, 1.0], into: &baseline)
+        XCTAssertEqual(baseline.weeks.map(\.verdict), Array(repeating: .usual, count: 8))
+        XCTAssertLessThan(baseline.alertBand, 0.13)
+        XCTAssertGreaterThanOrEqual(baseline.alertBand, CoolingBaseline.minAlertBand)
+    }
+
+    /// One good week is not a new normal; it takes two in a row.
+    func testOneBetterWeekIsNotLearned() {
+        var baseline = CoolingBaseline(since: t0)
+        let changes = record([1.0, 0.75, 1.0, 0.75, 1.0], into: &baseline)
+        XCTAssertTrue(changes.isEmpty)
+        XCTAssertEqual(baseline.level, 1, accuracy: 1e-9)
+    }
+
+    /// Worse is reported every week it lasts and never learned, until the user accepts it.
+    func testWorseIsReportedEveryWeekUntilAccepted() {
+        var baseline = CoolingBaseline(since: t0)
+        let changes = record([1.0, 1.3, 1.3], into: &baseline)
+        XCTAssertEqual(changes.count, 2)
+        XCTAssertEqual(baseline.level, 1, accuracy: 1e-9)
+        XCTAssertTrue(baseline.canAccept)
+        XCTAssertTrue(baseline.accept(now: t0.addingTimeInterval(30 * 86400)))
+        XCTAssertFalse(baseline.canAccept)
+        XCTAssertEqual(baseline.level, 1.3, accuracy: 1e-9)
+        XCTAssertTrue(record([1.3], into: &baseline).isEmpty)
+        XCTAssertFalse(baseline.accept(now: t0.addingTimeInterval(40 * 86400)), "nothing left to accept")
+    }
+
+    /// A fault that creeps up a little each week never carries the usual level with it, and is reported in the end.
+    func testCreepingFaultIsNotAbsorbed() {
+        var baseline = CoolingBaseline(since: t0)
+        var reported = false
+        for week in 0..<12 {
+            let changes = record([1 + 0.025 * Double(week)], into: &baseline)
+            XCTAssertLessThanOrEqual(baseline.level, 1 + 1e-9)
+            if !changes.isEmpty { reported = true; break }
+        }
+        XCTAssertTrue(reported)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(baseline.weeks.last?.ratio), 1.21)
+    }
+
+    /// An idle rise the user has accepted is not reported again; a further rise is.
+    func testAcceptedIdleRiseIsAllowedFor() {
+        let reference = ThermalFit(base: 0.2, resistance: 1, tau: 3, residualMAD: 0.2, powerP95: 6, minutes: 20000, fittedAt: t0, roomReferenced: true)
+        var current = reference
+        current.base = 4
+        XCTAssertTrue(ThermalModel.idleDrifted(current, from: reference))
+        XCTAssertFalse(ThermalModel.idleDrifted(current, from: reference, allowance: 3.8))
+        current.base = 7.5
+        XCTAssertTrue(ThermalModel.idleDrifted(current, from: reference, allowance: 3.8))
     }
 
     /// A window with no busy minutes cannot become the reference: its watts term is not measured.

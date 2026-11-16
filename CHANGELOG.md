@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- The long-term cooling check now learns, week by week, instead of comparing against a reference frozen once.
+  Each finished week gives one number — its busy-minute warming over what the reference predicts — kept for
+  good. From them Smolder learns the usual level and how much a usual week strays. Two weeks in a row clearly
+  better (a stand, a cooler spot) become the new usual level, with a message saying so; nothing has to be
+  reset. A week clearly worse is reported every week until you accept it with `/accept` (Telegram) or
+  *Settings → Detection → Accept as the new normal*; worse is never learned on its own, and more weeks refine
+  the level only downward, so a slow fault cannot creep in. The alert line is learned from how much each usual
+  week differs from the one before: it starts at +20 % and narrows to as little as +8 %.
+- `/status` and *Settings → Detection* show where the cooling check stands.
+- The first usual level is the reference measured against its own window the same way, not an assumed 1.
+
 ## 0.2.0
 
 - Any Apple Silicon Mac, not only a MacBook with its lid closed. At launch Smolder reads what the hardware

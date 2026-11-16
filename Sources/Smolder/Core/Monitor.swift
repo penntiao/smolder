@@ -25,6 +25,8 @@ struct LiveState {
     var heartbeatError: String?
     var telegramPollError: String?
     var machine = Machine(name: nil, identifier: nil, hasLid: false, hasBattery: false, fans: 0)
+    var coolingSummary = ""
+    var canAcceptCooling = false
 }
 
 /// One 10-second reading of every sensor.
@@ -46,6 +48,7 @@ private struct PersistedState: Codable {
     var fit: ThermalFit?
     var referenceFit: ThermalFit?
     var lastDriftNotice: Date?
+    var cooling: CoolingBaseline?
 }
 
 @MainActor
@@ -277,40 +280,99 @@ final class Monitor: ObservableObject {
         }
     }
 
-    /// Checks the new fit against the frozen reference (see `DriftCheck`) and says so when cooling has drifted.
+    /// Keeps the reference (see `DriftCheck`), judges the idle level against it, and records each finished week in the
+    /// learned cooling baseline (see `CoolingBaseline`); says so when cooling got worse, or learned that it got better.
     private func checkDrift(_ fit: ThermalFit, excluded: [ClosedRange<Date>], now: Date) {
         let window = config.detection.baselineDays * 86400
         let store = self.store
+        let samples: (Date, Date) -> [MinuteSample] = { from, to in store.samples(since: from).filter { $0.timestamp < to } }
+        let previous = persisted.referenceFit
         let (reference, outcome) = DriftCheck.run(
-            reference: persisted.referenceFit, fallback: fit, hasLid: machine.hasLid, excluded: excluded,
-            config: config.detection, now: now,
-            window: { end in store.samples(since: end.addingTimeInterval(-window)).filter { $0.timestamp < end } })
+            reference: previous, fallback: fit, hasLid: machine.hasLid, idleAllowance: persisted.cooling?.idleAllowance ?? 0,
+            excluded: excluded, config: config.detection, now: now, window: { end in samples(end.addingTimeInterval(-window), end) })
         persisted.referenceFit = reference
-        guard case let .drifted(current, load) = outcome, let reference else { return }
-        if let last = persisted.lastDriftNotice, now.timeIntervalSince(last) < 7 * 86400 { return }
-        persisted.lastDriftNotice = now
-        var lines: [String] = []
-        if let load, load.ratio > ThermalModel.driftRatio {
-            lines.append(L("Under load the die warmed %@; the reference predicts %@ for the same load",
-                           String(format: "%.1f°", load.measured), String(format: "%.1f°", load.predicted)))
-            lines.append(L("Judged on %d busy minutes", load.minutes))
+        // A new reference is a new yardstick: the weeks measured against the old one do not carry over.
+        if reference == nil || reference?.fittedAt != previous?.fittedAt { persisted.cooling = nil }
+        if let reference, persisted.cooling == nil {
+            let own = ThermalModel.loadDrift(samples(reference.fittedAt.addingTimeInterval(-window), reference.fittedAt),
+                                             excluded: excluded, reference: reference)
+            persisted.cooling = CoolingBaseline(since: previous?.fittedAt == reference.fittedAt ? now : reference.fittedAt,
+                                                level: own?.ratio ?? 1)
         }
-        if ThermalModel.idleDrifted(current, from: reference) {
-            lines.append(current.roomReferenced
-                ? L("At idle %@ above the room; reference %@", String(format: "%.1f°", current.base), String(format: "%.1f°", reference.base))
-                : L("At idle %@; reference %@", Format.celsius(current.base), Format.celsius(reference.base)))
+        guard let reference, var cooling = persisted.cooling else { return }
+
+        switch outcome {
+        case let .steady(current), let .drifted(current):
+            cooling.lastIdleRise = current.base - reference.base
+            cooling.idleDrifted = ThermalModel.idleDrifted(current, from: reference, allowance: cooling.idleAllowance)
+        default:
+            break
         }
+        var events: [SmolderEvent] = []
+        if case let .drifted(current) = outcome,
+           persisted.lastDriftNotice.map({ now.timeIntervalSince($0) >= 7 * 86400 }) ?? true {
+            persisted.lastDriftNotice = now
+            events.append(driftEvent(lines: [current.roomReferenced
+                ? L("At idle %@ above the room; reference %@", String(format: "%.1f°", current.base), String(format: "%.1f°", reference.base + cooling.idleAllowance))
+                : L("At idle %@; reference %@", Format.celsius(current.base), Format.celsius(reference.base + cooling.idleAllowance))],
+                reference: reference, now: now))
+        }
+        for change in cooling.catchUp(reference: reference, excluded: excluded, now: now, samples: samples) {
+            switch change {
+            case let .worse(week, level, band, weeks):
+                events.append(driftEvent(lines: [
+                    L("This week, under load, the die warmed %@ more than usual for the same load", Format.share((week.ratio ?? level) / level - 1)),
+                    weeks == 0 ? L("Alert line %@ (no usual weeks learned yet)", Format.percent(band))
+                               : L("Usual weeks stay within %@ (learned from %d weeks)", Format.percent(band), weeks),
+                ], reference: reference, now: now))
+            case let .improved(from, to):
+                events.append(SmolderEvent(kind: .thermalAnomaly, severity: .info, title: L("Cooling has improved"),
+                                           lines: [L("Two weeks in a row the die warmed %@ less under load than usual; that is now the usual level",
+                                                     Format.share(1 - to / from)),
+                                                   L("If it gets worse again, Smolder will say so")],
+                                           incidentID: UUID().uuidString, startedAt: now))
+            }
+        }
+        persisted.cooling = cooling
+        if !events.isEmpty { Task { for event in events { await outbox.enqueue(event) }; await flushOutbox() } }
+    }
+
+    private func driftEvent(lines: [String], reference: ThermalFit, now: Date) -> SmolderEvent {
+        var lines = lines
         switch reference.lid {
         case .closed?: lines.append(L("Only minutes with the lid closed are compared"))
         case .open?: lines.append(L("Only minutes with the lid open are compared"))
         default: break
         }
-        lines.append(current.roomReferenced ? L("The room is estimated from the battery while the Mac is idle")
-                                            : L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor"))
-        let event = SmolderEvent(kind: .thermalAnomaly, severity: .info,
-                                 title: L("Cooling has drifted from its reference"),
-                                 lines: lines, incidentID: UUID().uuidString, startedAt: now)
-        Task { await outbox.enqueue(event); await flushOutbox() }
+        lines.append(reference.roomReferenced ? L("The room is estimated from the battery while the Mac is idle")
+                                              : L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor"))
+        lines.append(L("If this is the new normal (the Mac was moved, a stand taken away), send /accept or press Accept in Settings → Detection"))
+        return SmolderEvent(kind: .thermalAnomaly, severity: .info, title: L("Cooling has drifted from its reference"),
+                            lines: lines, incidentID: UUID().uuidString, startedAt: now)
+    }
+
+    /// `/accept` and the button in Settings: what the cooling check flagged as worse becomes the new usual level.
+    @discardableResult
+    func acceptCooling() -> String {
+        guard var cooling = persisted.cooling else { return L("Nothing to accept: the cooling reference is still collecting data") }
+        guard cooling.accept(now: Date()) else { return L("Nothing to accept: cooling is within its usual range") }
+        persisted.cooling = cooling
+        savePersisted()
+        refreshLive()
+        return L("Accepted: this is now the usual level. If it gets worse from here, Smolder will say so.")
+    }
+
+    /// One line on the long-term cooling check, for `/status` and Settings.
+    var coolingSummary: String {
+        guard let cooling = persisted.cooling else { return L("Cooling reference: collecting data") }
+        guard let last = cooling.lastJudged else { return L("Cooling reference: learning, no week judged yet") }
+        let state: String
+        switch last.verdict {
+        case .worse: state = L("worse than usual")
+        case .better: state = L("better than usual")
+        default: state = L("as usual")
+        }
+        return L("Cooling reference: %@ (%d weeks, alert above %@)", state, cooling.judgedWeeks, Format.percent(cooling.alertBand))
     }
 
     private func isLearning(now: Date) -> Bool {
@@ -343,7 +405,8 @@ final class Monitor: ObservableObject {
         if config.telegram.enabled, config.telegram.answerCommands, !token.isEmpty, !chatID.isEmpty {
             let bot = self.bot
             let status: @Sendable () async -> String = { [weak self] in await self?.statusHTML() ?? "" }
-            Task { await bot.start(token: token, chatID: chatID, status: status) }
+            let accept: @Sendable () async -> String = { [weak self] in await self?.acceptCooling() ?? "" }
+            Task { await bot.start(token: token, chatID: chatID, status: status, accept: accept) }
         } else {
             let bot = self.bot
             Task { await bot.stop() }
@@ -403,6 +466,7 @@ final class Monitor: ObservableObject {
             }
         }
         if s.learning { lines.append(L("Learning: %d%% done", Int(s.learningProgress * 100))) }
+        lines.append(escape(s.coolingSummary))
         return lines.joined(separator: "\n")
     }
 
@@ -486,6 +550,8 @@ final class Monitor: ObservableObject {
         }
         live.openIncidents = tracker.open.values.sorted { $0.openedAt < $1.openedAt }
         live.recentIncidents = Array(tracker.history.suffix(20).reversed())
+        live.coolingSummary = coolingSummary
+        live.canAcceptCooling = persisted.cooling?.canAccept ?? false
     }
 
     private func reloadChart() {

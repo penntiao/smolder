@@ -122,26 +122,30 @@ enum ThermalModel {
     /// Busy minutes needed, in the reference window and in the window judged against it. Without them a fit's watts
     /// term is set by the idle minutes alone, where the small, uneven warming of a nearly idle Mac decides the slope.
     static let driftMinLoadedMinutes = 180
-    /// Load-driven warming more than 20 % above what the reference predicts for the same minutes reads as drift.
-    static let driftRatio = 1.2
     /// After the lid opens or closes, the chassis takes about an hour to settle (the slow filter's time constant):
     /// minutes inside that hour belong to neither state.
     static let lidSettleMinutes: Double = ThermalFit.slowTau
 
     /// The idle temperature up more than 8 °C (3 °C over the room for room-referenced fits, whose idle rise is a
     /// fraction of a degree to begin with). A near-idle window fixes the idle level well, so this one is always judged.
-    static func idleDrifted(_ fit: ThermalFit, from reference: ThermalFit) -> Bool {
-        fit.base - reference.base > (fit.roomReferenced ? 3 : 8)
+    /// `allowance`: an idle rise the user has accepted as the new normal.
+    static func idleDrifted(_ fit: ThermalFit, from reference: ThermalFit, allowance: Double = 0) -> Bool {
+        fit.base - reference.base - allowance > idleLimit(fit)
     }
+
+    static func idleLimit(_ fit: ThermalFit) -> Double { fit.roomReferenced ? 3 : 8 }
 
     /// The window's busy minutes, measured with the reference as the yardstick: how much the load warmed the die,
     /// against what the reference predicts for the same inputs. Comparing fitted coefficients instead fails whenever
     /// the windows worked differently — the watts term of a mostly idle window is set by its idle minutes, and busy
     /// cores and watts trade heat between their two terms. Busy minutes beyond the load the reference has seen are left
-    /// out. nil when the window has fewer than `driftMinLoadedMinutes` of them.
-    static func loadDrift(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], reference: ThermalFit) -> LoadDrift? {
+    /// out. nil when the window has fewer than `driftMinLoadedMinutes` of them. Minutes before `since` only warm up the
+    /// filters (pass a few hours of lead-in so the first minutes of a week are judged like the rest).
+    static func loadDrift(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], reference: ThermalFit,
+                          since: Date? = nil) -> LoadDrift? {
         let points = collect(samples, excluded: excluded, tau: reference.tau, useCPUPower: false,
                              room: reference.roomReferenced, mask: lidMask(samples, reference.lid))
+            .filter { since == nil || $0.time >= since! }
         guard let idle = Stats.quantile(points.map(\.input.power), 0.5) else { return nil }
         let ceiling = (reference.loadedPowerP90 ?? reference.powerP95) * 1.1
         var measured: [Double] = [], predicted: [Double] = []
@@ -228,8 +232,8 @@ enum ThermalModel {
     /// The filtered inputs and die temperature (over the room, with `room`) of every usable minute. The filter runs
     /// through every minute, `mask` only decides which are kept, so the inputs stay continuous across a lid change.
     private static func collect(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], tau: Double, useCPUPower: Bool,
-                                room: Bool, mask: [Bool]?) -> [(input: ThermalInput, die: Double)] {
-        var points: [(input: ThermalInput, die: Double)] = []
+                                room: Bool, mask: [Bool]?) -> [(input: ThermalInput, die: Double, time: Date)] {
+        var points: [(input: ThermalInput, die: Double, time: Date)] = []
         var filter = ThermalFilter()
         var warmup = 0
         for (i, s) in samples.enumerated() {
@@ -242,7 +246,7 @@ enum ThermalModel {
             if let mask, !mask[i] { continue }
             if excluded.contains(where: { $0.contains(s.timestamp) }) { continue }
             if room, input.room == nil { continue }
-            points.append((input, die - (room ? input.room! : 0)))
+            points.append((input, die - (room ? input.room! : 0), s.timestamp))
         }
         return points
     }

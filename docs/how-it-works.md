@@ -163,16 +163,41 @@ These never adapt:
     with 95 % of minutes under 1.7 W read as 65 % worse cooling). So the check measures the window's *busy* minutes — smoothed
     power at least 2 W above the window's median, up to the load the reference has seen — with the
     reference as the yardstick: the median warming those minutes show over the reference's idle level,
-    against the median the reference predicts for the very same inputs. More than 20 % above is drift. A
-    window with fewer than 180 busy minutes is not judged under load, and cannot become the reference.
-    On the same lid-mixed history the coefficients moved +26 % to +81 %; this measure 1.01–1.22.
+    against the median the reference predicts for the very same inputs. A window with fewer than 180 busy
+    minutes cannot become the reference, and a week with fewer is not judged under load. On the same
+    lid-mixed history the coefficients moved +26 % to +81 %; this measure 1.01–1.22.
   - The idle level is judged on every window: the idle rise over the room up more than 3 °C (8 °C on the
     ordinary fit) is drift.
+
+  The reference fit is only the yardstick; what counts as *usual* is learned, week by week
+  (`CoolingBaseline`). Each finished week gives one number — that week's busy-minute warming over what the
+  yardstick predicts — kept for good, so the history is not bound by the 90 days of minute data. The first
+  usual level is the yardstick measured against its own window the same way. From the weeks Smolder learns
+  the usual level and how much a usual week strays from it:
+  - **Better is learned on its own.** Two judged weeks in a row clearly below the usual level (a stand under
+    the Mac, a cooler spot) become the new usual level, and Smolder says so.
+  - **Worse is never learned on its own.** A week clearly above it is reported, every week it lasts, until you
+    accept it: `/accept` to the Telegram bot, or *Settings → Detection → Accept as the new normal*. Accepting
+    also covers a flagged idle rise.
+  - **More weeks refine the level, but only downward** from the level last set by the first week, an
+    improvement or an acceptance. A fault that creeps up a little each week cannot carry the level with it.
+  - **"Clearly" is learned too.** The stray of one week is estimated from how much each usual week differs
+    from the usual week before it (half the squared difference), pooled with a prior worth four weeks at
+    8 %. A steady creep moves each week only a little, so it does not widen the line it is about to cross;
+    the spread of the deviations themselves would, and in testing let a fault rising 2.5 % a week through for
+    twelve weeks. The alert line is 2.5 times the stray, starting at +20 % and narrowing as the weeks agree,
+    down to +8 %; an improvement must exceed twice the stray, at least 5 %.
+
+  On the author's Mac before lid filtering, four weeks read 1.17, 1.09, 1.09 and 1.16 against a usual level
+  of 1.01 measured on the reference window: all within the line, which had narrowed to +17 %. That steady
+  +10 % or so is about what working with the lid closed rather than open costs; with both sides kept to the
+  closed lid it should go away. If a steady offset like that remains, the line will reach it as it narrows,
+  report it once, and an acceptance settles it.
 
   A reference saved before 0.1.9 mixed both lid states; on a Mac with a lid it is dropped and a new one
   frozen once a window has a week of minutes in one lid state and enough busy minutes, which on a mostly
   idle Mac can take a while. Until then the check does not run. Where there is no lid the old reference is
-  kept. The live judgement keeps the ordinary fit and the room offset above: its band comes from the fit's
+  kept, and its weeks start being learned from the day 0.3.0 starts. The live judgement keeps the ordinary fit and the room offset above: its band comes from the fit's
   spread, and fitted against the room that spread shrinks enough to make ordinary use read as too hot.
 - *Accept as normal* on an incident is an explicit choice: it closes the incident and lets its data be
   learned from.

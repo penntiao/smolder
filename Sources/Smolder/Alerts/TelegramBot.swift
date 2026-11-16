@@ -6,7 +6,8 @@ actor TelegramBot {
     private var task: Task<Void, Never>?
     private(set) var lastError: String?
 
-    func start(token: String, chatID: String, status: @escaping @Sendable () async -> String) {
+    func start(token: String, chatID: String, status: @escaping @Sendable () async -> String,
+               accept: @escaping @Sendable () async -> String) {
         stop()
         task = Task {
             var offset: Int?
@@ -23,8 +24,10 @@ actor TelegramBot {
                         switch command {
                         case "/status", "/start":
                             try? await Self.send(token: token, chatID: chatID, html: await status())
+                        case "/accept":
+                            try? await Self.send(token: token, chatID: chatID, html: await accept())
                         case "/help":
-                            try? await Self.send(token: token, chatID: chatID, html: L("<b>Smolder</b>\n/status — current temperatures, load and open incidents"))
+                            try? await Self.send(token: token, chatID: chatID, html: L("<b>Smolder</b>\n/status — current temperatures, load and open incidents\n/accept — take cooling that was reported worse as the new normal"))
                         default:
                             break
                         }

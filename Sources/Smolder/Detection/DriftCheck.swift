@@ -8,24 +8,25 @@ import Foundation
 ///   room that turned colder while the warm days were the busy ones does not read as worse cooling.
 /// - The lid: on a Mac with a lid, only minutes settled in one lid state (whichever most minutes were in when the
 ///   reference was frozen). A closed lid covers the keyboard deck; the same watts run the die hotter.
-/// - The load: the busy minutes of the window, set against what the reference predicts for those very minutes. A
-///   window with too few of them is not judged under load, and a window without them cannot become the reference.
-/// The idle level is judged on every window.
+/// - The load: busy minutes, set against what the reference predicts for those very minutes. A window without
+///   enough of them cannot become the reference. Judging them week by week, and learning what a usual week looks
+///   like, is `CoolingBaseline`'s job; this check keeps the reference and judges the idle level.
 enum DriftCheck {
     enum Outcome: Equatable {
         case waiting                // no reference yet, and this window cannot become one
         case frozen                 // this window became the reference
         case skipped                // nothing comparable to judge this time; the reference is kept
-        case steady(LoadDrift?)
-        case drifted(current: ThermalFit, load: LoadDrift?)
+        case steady(current: ThermalFit)
+        case drifted(current: ThermalFit)   // the idle level rose beyond its limit
     }
 
     /// - Parameters:
     ///   - fallback: the ordinary fit just made, used where no room-referenced fit can exist (a Mac without a battery).
     ///   - hasLid: whether this Mac reports a lid at all.
+    ///   - idleAllowance: idle rise over the reference the user has accepted (°C).
     ///   - window: the samples of the baseline window ending at a date.
     /// - Returns: the reference to keep (possibly new or nil) and what the check found.
-    static func run(reference: ThermalFit?, fallback: ThermalFit, hasLid: Bool, excluded: [ClosedRange<Date>],
+    static func run(reference: ThermalFit?, fallback: ThermalFit, hasLid: Bool, idleAllowance: Double = 0, excluded: [ClosedRange<Date>],
                     config: Config.Detection, now: Date, window: (Date) -> [MinuteSample]) -> (reference: ThermalFit?, outcome: Outcome) {
         let full = Int(config.baselineDays * 1440 * 0.5)
         let minimum = Int(config.learningHours * 60 * 0.5)
@@ -70,10 +71,6 @@ enum DriftCheck {
             return canServe ? (current, .frozen) : (nil, .waiting)
         }
 
-        let load = ThermalModel.loadDrift(samples, excluded: excluded, reference: r)
-        if ThermalModel.idleDrifted(current, from: r) || (load.map { $0.ratio > ThermalModel.driftRatio } ?? false) {
-            return (r, .drifted(current: current, load: load))
-        }
-        return (r, load == nil ? .skipped : .steady(load))
+        return (r, ThermalModel.idleDrifted(current, from: r, allowance: idleAllowance) ? .drifted(current: current) : .steady(current: current))
     }
 }
