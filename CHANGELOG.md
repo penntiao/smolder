@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Each minute now records which programs kept a screen awake, and for how many seconds (new `screen_holders`
+  table; `--probe` prints them too). On a closed Mac a lit screen is usually a remote-desktop session, so this
+  says whose lit minutes they were — a video, a presentation, a remote session. Recorded only; no detector
+  uses it.
+
 ## 0.3.0
 
 - The long-term cooling check now learns, week by week, instead of comparing against a reference frozen once.

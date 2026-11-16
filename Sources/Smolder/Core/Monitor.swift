@@ -39,6 +39,7 @@ private struct Reading {
     var cpuPower: Double?
     var lidClosed: Bool?
     var fanRPM: Double?
+    var screenHolders: Set<String>?
 }
 
 /// Persisted between launches.
@@ -171,7 +172,8 @@ final class Monitor: ObservableObject {
         let fan = machine.fans > 0 ? (0..<machine.fans).compactMap { smc?.fanRPM($0) }.max() : nil
         readings.append(Reading(temperatures: temps, power: power, cpuCores: cpu.sample(), pressure: pressure.read(),
                                 screenOn: ScreenState.isOn(), cpuPower: smc?.float(SMC.cpuPowerKey),
-                                lidClosed: machine.hasLid ? LidState.isClosed() : nil, fanRPM: fan))
+                                lidClosed: machine.hasLid ? LidState.isClosed() : nil, fanRPM: fan,
+                                screenHolders: ScreenHolders.read()))
     }
 
     private func sampleProcesses(now: Date) {
@@ -229,6 +231,7 @@ final class Monitor: ObservableObject {
         recentMinutes.removeAll { now.timeIntervalSince($0.timestamp) > 3 * 3600 }
         recentPrograms.removeAll { now.timeIntervalSince($0.timestamp) > 3 * 3600 }
         store.append(sample)
+        store.appendScreenHolders(minute: start, seconds: ScreenHolders.seconds(readings.map(\.screenHolders)))
         chart.append(sample)
         chart.removeAll { now.timeIntervalSince($0.timestamp) > 24 * 3600 }
 

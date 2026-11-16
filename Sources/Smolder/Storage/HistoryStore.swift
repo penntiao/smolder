@@ -53,6 +53,34 @@ final class HistoryStore {
             )
             """)
         try exec("CREATE INDEX IF NOT EXISTS process_usage_path ON process_usage(path, ts)")
+        // Seconds of each minute a program kept a screen awake (display assertions); rows only for holders
+        try exec("""
+            CREATE TABLE IF NOT EXISTS screen_holders (
+                ts INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                seconds INTEGER NOT NULL,
+                PRIMARY KEY (ts, name)
+            )
+            """)
+    }
+
+    func appendScreenHolders(minute: Date, seconds: [String: Int]) {
+        guard !seconds.isEmpty else { return }
+        queue.sync {
+            let sql = "INSERT OR REPLACE INTO screen_holders (ts, name, seconds) VALUES (?,?,?)"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            _ = try? exec("BEGIN")
+            for (name, held) in seconds where held > 0 {
+                sqlite3_reset(stmt)
+                sqlite3_bind_int64(stmt, 1, Int64(minute.timeIntervalSince1970))
+                sqlite3_bind_text(stmt, 2, name, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_int(stmt, 3, Int32(held))
+                sqlite3_step(stmt)
+            }
+            _ = try? exec("COMMIT")
+        }
     }
 
     func appendProcessUsage(bucket: Date, usage: [String: Double], anomalous: Set<String>) {
@@ -161,6 +189,7 @@ final class HistoryStore {
         queue.sync {
             _ = try? exec("DELETE FROM minutes WHERE ts < \(cutoff)")
             _ = try? exec("DELETE FROM process_usage WHERE ts < \(cutoff)")
+            _ = try? exec("DELETE FROM screen_holders WHERE ts < \(cutoff)")
         }
     }
 

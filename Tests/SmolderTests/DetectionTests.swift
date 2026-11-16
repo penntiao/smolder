@@ -881,6 +881,15 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(ProcessSampler.parseCPUTime("2-01:00:00")!, 176400, accuracy: 0.001)
         XCTAssertNil(ProcessSampler.parseCPUTime("abc"))
     }
+
+    func testScreenHolderSecondsShareTheMinuteByReadings() {
+        // Six readings: a remote session holds the screen for the last two, a video for one; one reading failed.
+        let r: [Set<String>?] = [[], [], nil, ["Video"], ["Remote"], ["Remote"]]
+        XCTAssertEqual(ScreenHolders.seconds(r), ["Remote": 24, "Video": 12])
+        XCTAssertEqual(ScreenHolders.seconds([["Remote"], ["Remote"]]), ["Remote": 60])
+        XCTAssertEqual(ScreenHolders.seconds([nil, nil]), [:])
+        XCTAssertEqual(ScreenHolders.seconds([[], []]), [:])
+    }
 }
 
 /// Deterministic noise so the scenarios are reproducible.
