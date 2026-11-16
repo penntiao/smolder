@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.3.2
+## 0.3.3
+
+(0.3.2 was tagged but never released: one test still expected the old *This Mac* line.)
 
 - Screens are now recorded by kind, so the history means the same on a MacBook and a Mac mini. New columns:
   `builtin_screen` — the Mac's own panel lit (MacBook, iMac; empty on a Mac without one) — and `other_screens`

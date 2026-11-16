@@ -641,9 +641,9 @@ final class DetectionTests: XCTestCase {
 
     func testMachineSummaryNamesWhatTheMacHas() {
         XCTAssertEqual(Machine(name: "Mac mini (2024)", identifier: "Mac16,10", hasLid: false, hasBattery: false, fans: 1).summary,
-                       "Mac mini (2024) · Mac16,10 · no lid · no battery · 1 fan")
-        XCTAssertEqual(Machine(name: nil, identifier: "Mac16,12", hasLid: true, hasBattery: true, fans: 0).summary,
-                       "Mac16,12 · lid · battery · fanless")
+                       "Mac mini (2024) · Mac16,10 · no lid · no built-in screen · no battery · 1 fan")
+        XCTAssertEqual(Machine(name: nil, identifier: "Mac16,12", hasLid: true, hasBattery: true, fans: 0, hasBuiltinDisplay: true).summary,
+                       "Mac16,12 · lid · built-in screen · battery · fanless")
     }
 
     /// On a Mac with fans, the heat alert says to check them; on a fanless one, the airflow around it.
