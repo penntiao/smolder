@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.9
+
+- Fix: "Cooling has drifted from its reference" kept firing every week though cooling had not changed. Two
+  causes, both changes in how the Mac was used. The reference's busy minutes were mostly lid-open desk work,
+  later ones lid-closed remote work, which runs the die hotter at the same watts; and the check compared
+  fitted coefficients, so a mostly idle fortnight, whose watts term is set by its idle minutes, read as 65 %
+  worse cooling. Each minute now records whether the lid was closed (`AppleClamshellState`, no root; new
+  `lid_closed` column, also in `--probe`). Drift fits keep to minutes settled for an hour in one lid state,
+  and the check measures the window's busy minutes (≥ 2 W above its median power) against what the reference
+  predicts for those very inputs: more than 20 % above is drift; fewer than 180 busy minutes are not judged.
+  The idle-level check is unchanged. On the same history the old measure moved +26 % to +81 %, the new one
+  1.01–1.22 with the lid states still mixed.
+- A reference saved by an earlier version mixed both lid states: on a Mac with a lid it is dropped, and a new
+  one is frozen once a window has a week of minutes in one lid state and at least 180 busy minutes. Until then
+  the drift check does not run. On a Mac without a lid the old reference is kept.
+
 ## 0.1.8
 
 - Fix: when a room-referenced fit could not be made (too few quiet minutes in the window), the drift check fell

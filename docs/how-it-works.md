@@ -128,20 +128,40 @@ These never adapt:
 
 - Time ranges of past and open incidents are excluded from every fit and baseline, including the room offset.
 - A program's buckets are marked anomalous while it is under an incident.
-- The first full-window thermal fit is frozen as a reference. If later fits drift more than 20 % in
-  steady-state resistance (`R + Rslow`), Smolder tells you once a week instead of silently accepting it.
-  The room changes over weeks too, and a fit on the die alone puts that into `R` whenever the warm days
-  happen to be the busy ones (on the author's Mac: a week of use at about 24 °C, then a week idle as the
-  room cooled to about 19 °C, read as 20 % worse cooling). So where the Mac has a battery, the drift check
-  compares separate fits of the die's rise *over the room*, with the same inputs (model 2). The room is the
-  battery temperature at the last quiet minute — both filtered powers at most 1 W, so the chassis has
-  cooled — held through busy stretches and dropped after 24 hours without a quiet minute. A fanless Mac's
-  battery sits within about a degree of the room when idle; a constant offset ends up in `base`, which is
-  then the idle rise over the room and drifts if it grows by more than 3 °C. On the week above, these
-  fits moved 13 % (1.16 → 1.31 °C/W) against 20 % for the die alone. A reference saved by an older
-  version is refitted this way on the window it was frozen on. Without a battery the check uses the
-  ordinary fit and an 8 °C limit on `base`, and says it cannot tell a hotter room from worse cooling.
-  The live judgement keeps the ordinary fit and the room offset above: its band comes from the fit's
+- A window of the thermal model is frozen as a reference, and every daily refit is checked against it; if
+  cooling has drifted, Smolder tells you once a week instead of silently accepting it. What is compared has
+  to be alike, or changes in how the Mac was used read as changes in cooling. On the author's Mac each of
+  these produced false alarms before it was handled:
+  - **The room.** A fit on the die alone puts a changing room into `R` whenever the warm days happen to be
+    the busy ones (a week of use at about 24 °C, then a week idle as the room cooled to about 19 °C, read as
+    20 % worse cooling). Where the Mac has a battery, the drift check fits the die's rise *over the room*
+    (model 2). The room is the battery temperature at the last quiet minute — both filtered powers at most
+    1 W, so the chassis has cooled — held through busy stretches and dropped after 24 hours without a quiet
+    minute. A fanless Mac's battery sits within about a degree of the room when idle; a constant offset ends
+    up in `base`, the idle rise over the room. Without a battery the check uses the ordinary fit and says it
+    cannot tell a hotter room from worse cooling.
+  - **The lid.** A closed lid covers the keyboard deck, so the same watts run the die hotter than with the
+    lid open. The reference was frozen during a week of mostly desk work with the lid open, later work was
+    mostly remote with it closed, and the check read that as worse cooling (+26 % to +53 %). Each minute records whether
+    the lid was closed (`AppleClamshellState`, no root), and drift fits keep to one lid state: whichever
+    most minutes were in when the reference was frozen. A minute counts once its lid state has held for an
+    hour (the chassis' slow time constant) without a gap of more than five minutes.
+  - **The load.** Comparing fitted coefficients (`R + Rslow`) fails whenever two windows worked
+    differently: in a mostly idle window the watts term is set by the idle minutes, which warm a little
+    more per watt than busy ones, and busy cores and watts trade heat between their two terms (two weeks
+    with 95 % of minutes under 1.7 W read as 65 % worse cooling). So the check measures the window's *busy* minutes — smoothed
+    power at least 2 W above the window's median, up to the load the reference has seen — with the
+    reference as the yardstick: the median warming those minutes show over the reference's idle level,
+    against the median the reference predicts for the very same inputs. More than 20 % above is drift. A
+    window with fewer than 180 busy minutes is not judged under load, and cannot become the reference.
+    On the same lid-mixed history the coefficients moved +26 % to +81 %; this measure 1.01–1.22.
+  - The idle level is judged on every window: the idle rise over the room up more than 3 °C (8 °C on the
+    ordinary fit) is drift.
+
+  A reference saved before 0.1.9 mixed both lid states; on a Mac with a lid it is dropped and a new one
+  frozen once a window has a week of minutes in one lid state and enough busy minutes, which on a mostly
+  idle Mac can take a while. Until then the check does not run. Where there is no lid the old reference is
+  kept. The live judgement keeps the ordinary fit and the room offset above: its band comes from the fit's
   spread, and fitted against the room that spread shrinks enough to make ordinary use read as too hot.
 - *Accept as normal* on an incident is an explicit choice: it closes the incident and lets its data be
   learned from.

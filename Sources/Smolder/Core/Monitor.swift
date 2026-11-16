@@ -64,7 +64,7 @@ final class Monitor: ObservableObject {
 
     // Current minute accumulators
     private var minuteStart = Monitor.minuteFloor(Date())
-    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel, Bool?, Double?)] = []
+    private var readings: [(TemperatureReading, Double?, Double?, PressureLevel, Bool?, Double?, Bool?)] = []
     private var programSeconds: [String: Double] = [:]
     private var programNames: [String: String] = [:]
     private var programPIDs: [String: (Int32, Double)] = [:]
@@ -147,7 +147,7 @@ final class Monitor: ObservableObject {
     private func sampleSensors() {
         let temps = hid.read()
         let power = smc?.float("PSTR")
-        readings.append((temps, power, cpu.sample(), pressure.read(), ScreenState.isOn(), smc?.float(SMC.cpuPowerKey)))
+        readings.append((temps, power, cpu.sample(), pressure.read(), ScreenState.isOn(), smc?.float(SMC.cpuPowerKey), LidState.isClosed()))
     }
 
     private func sampleProcesses(now: Date) {
@@ -175,6 +175,7 @@ final class Monitor: ObservableObject {
         guard !readings.isEmpty else { return }
 
         let screens = readings.compactMap(\.4)
+        let lids = readings.compactMap(\.6)
         var sample = MinuteSample(
             timestamp: start,
             dieMax: readings.compactMap(\.0.dieMax).max(),
@@ -186,7 +187,8 @@ final class Monitor: ObservableObject {
             thermalState: readings.map(\.3.rawValue).max() ?? 0,
             expectedDie: nil,
             screenOn: screens.isEmpty ? nil : screens.contains(true),
-            cpuPower: Stats.mean(readings.compactMap(\.5)))
+            cpuPower: Stats.mean(readings.compactMap(\.5)),
+            lidClosed: lids.isEmpty ? nil : !lids.contains(false))
         thermal.excluded = tracker.excludedRanges
         sample.expectedDie = thermal.observe(sample, config: config.detection).map { $0 + thermal.ambientOffset(at: now, config: config.detection) }
 
@@ -253,47 +255,36 @@ final class Monitor: ObservableObject {
         }
     }
 
-    /// A slowly drifting model can quietly absorb a real problem. Compare against a frozen reference
-    /// (the first fit with a full baseline window) and say so when the physics changed noticeably.
-    /// Where the Mac has a battery the comparison is between room-referenced fits, so that a room that has
-    /// turned colder over the window — while the warm days were the busy ones — does not read as worse cooling.
+    /// Checks the new fit against the frozen reference (see `DriftCheck`) and says so when cooling has drifted.
     private func checkDrift(_ fit: ThermalFit, excluded: [ClosedRange<Date>], now: Date) {
-        let d = config.detection
-        let window = d.baselineDays * 86400
-        let minimum = Int(d.learningHours * 60 * 0.5)
-        func roomFit(endingAt end: Date) -> ThermalFit? {
-            let samples = store.samples(since: end.addingTimeInterval(-window)).filter { $0.timestamp < end }
-            return ThermalModel.roomFit(samples, excluded: excluded, minimumMinutes: minimum, now: end)
-        }
-        let current = roomFit(endingAt: now) ?? fit
-        // Too few quiet minutes this time: skip the check rather than drop a room-referenced reference.
-        if persisted.referenceFit?.roomReferenced == true, !current.roomReferenced { return }
-        if let reference = persisted.referenceFit,
-           reference.roomReferenced != current.roomReferenced || reference.model != current.model {
-            // A reference of another kind has a different R. Refit the window it was frozen on, so the comparison
-            // keeps its anchor in time; where that is not possible, start over with this one.
-            persisted.referenceFit = current.roomReferenced ? roomFit(endingAt: reference.fittedAt) : nil
-        }
-        guard let reference = persisted.referenceFit,
-              Double(reference.minutes) >= d.baselineDays * 1440 * 0.5 else {
-            persisted.referenceFit = Double(current.minutes) >= d.baselineDays * 1440 * 0.5 ? current : nil
-            return
-        }
-        guard ThermalModel.hasDrifted(current, from: reference) else { return }
+        let window = config.detection.baselineDays * 86400
+        let store = self.store
+        let (reference, outcome) = DriftCheck.run(
+            reference: persisted.referenceFit, fallback: fit, hasLid: LidState.isClosed() != nil, excluded: excluded,
+            config: config.detection, now: now,
+            window: { end in store.samples(since: end.addingTimeInterval(-window)).filter { $0.timestamp < end } })
+        persisted.referenceFit = reference
+        guard case let .drifted(current, load) = outcome, let reference else { return }
         if let last = persisted.lastDriftNotice, now.timeIntervalSince(last) < 7 * 86400 { return }
         persisted.lastDriftNotice = now
-        let lines: [String]
-        if current.roomReferenced {
-            lines = [L("Now %@ °C/W and %@ above the room at idle; reference %@ °C/W and %@",
-                       String(format: "%.1f", current.steadyResistance), String(format: "%.1f°", current.base),
-                       String(format: "%.1f", reference.steadyResistance), String(format: "%.1f°", reference.base)),
-                     L("The room is estimated from the battery while the Mac is idle")]
-        } else {
-            lines = [L("Now %@ °C/W and %@ at idle; reference %@ °C/W and %@",
-                       String(format: "%.1f", current.steadyResistance), Format.celsius(current.base),
-                       String(format: "%.1f", reference.steadyResistance), Format.celsius(reference.base)),
-                     L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor")]
+        var lines: [String] = []
+        if let load, load.ratio > ThermalModel.driftRatio {
+            lines.append(L("Under load the die warmed %@; the reference predicts %@ for the same load",
+                           String(format: "%.1f°", load.measured), String(format: "%.1f°", load.predicted)))
+            lines.append(L("Judged on %d busy minutes", load.minutes))
         }
+        if ThermalModel.idleDrifted(current, from: reference) {
+            lines.append(current.roomReferenced
+                ? L("At idle %@ above the room; reference %@", String(format: "%.1f°", current.base), String(format: "%.1f°", reference.base))
+                : L("At idle %@; reference %@", Format.celsius(current.base), Format.celsius(reference.base)))
+        }
+        switch reference.lid {
+        case .closed?: lines.append(L("Only minutes with the lid closed are compared"))
+        case .open?: lines.append(L("Only minutes with the lid open are compared"))
+        default: break
+        }
+        lines.append(current.roomReferenced ? L("The room is estimated from the battery while the Mac is idle")
+                                            : L("A hotter room looks the same as worse cooling — Smolder has no ambient sensor"))
         let event = SmolderEvent(kind: .thermalAnomaly, severity: .info,
                                  title: L("Cooling has drifted from its reference"),
                                  lines: lines, incidentID: UUID().uuidString, startedAt: now)
@@ -450,7 +441,7 @@ final class Monitor: ObservableObject {
     // MARK: - Helpers
 
     private func refreshLive() {
-        guard let (temps, power, cpuCores, level, _, _) = readings.last else { return }
+        guard let (temps, power, cpuCores, level, _, _, _) = readings.last else { return }
         live.dieMax = temps.dieMax
         live.dieAvg = temps.dieAvg
         live.ssd = temps.ssd

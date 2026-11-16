@@ -350,12 +350,14 @@ final class DetectionTests: XCTestCase {
         let window = roomDays(start: t0, days: warmBusy + coldIdle)
         let plainReference = try XCTUnwrap(ThermalModel.fit(reference, excluded: [], minimumMinutes: 1000))
         let plain = try XCTUnwrap(ThermalModel.fit(window, excluded: [], minimumMinutes: 1000))
-        XCTAssertTrue(ThermalModel.hasDrifted(plain, from: plainReference), "the die alone mistakes the colder room for worse cooling")
+        XCTAssertGreaterThan(plain.steadyResistance / plainReference.steadyResistance, 1.2, "the die alone mistakes the colder room for worse cooling")
         let roomReference = try XCTUnwrap(ThermalModel.roomFit(reference, excluded: [], minimumMinutes: 1000))
         let room = try XCTUnwrap(ThermalModel.roomFit(window, excluded: [], minimumMinutes: 1000))
         XCTAssertTrue(room.roomReferenced)
         XCTAssertEqual(room.steadyResistance, 1.1, accuracy: 0.25)
-        XCTAssertFalse(ThermalModel.hasDrifted(room, from: roomReference))
+        XCTAssertFalse(ThermalModel.idleDrifted(room, from: roomReference))
+        let load = try XCTUnwrap(ThermalModel.loadDrift(window, excluded: [], reference: roomReference))
+        XCTAssertEqual(load.ratio, 1, accuracy: 0.1)
     }
 
     /// Cooling 40 % worse in a room that changes on its own must still read as drift.
@@ -364,8 +366,162 @@ final class DetectionTests: XCTestCase {
         let reference = try XCTUnwrap(ThermalModel.roomFit(roomDays(start: t0, days: rooms.map { ($0, true) }),
                                                            excluded: [], minimumMinutes: 1000))
         let later = roomDays(start: t0.addingTimeInterval(7 * 86400), days: rooms.reversed().map { ($0, true) }, soak: 1.4)
-        let current = try XCTUnwrap(ThermalModel.roomFit(later, excluded: [], minimumMinutes: 1000))
-        XCTAssertTrue(ThermalModel.hasDrifted(current, from: reference))
+        let load = try XCTUnwrap(ThermalModel.loadDrift(later, excluded: [], reference: reference))
+        XCTAssertGreaterThan(load.ratio, ThermalModel.driftRatio)
+        XCTAssertEqual(load.ratio, 1.4, accuracy: 0.1)
+    }
+
+    // MARK: drift: lid, load, reference
+
+    /// A laptop whose lid matters: the die warms `closedSoak` times the mixed-load physics with the lid closed and
+    /// `openSoak` times with it open (the keyboard deck sheds heat too). Steady room; the battery follows it as in `roomDays`.
+    private func lidMinutes(start: Date, load: [(power: Double, cpu: Double, closed: Bool)], closedSoak: Double = 1.4, openSoak: Double = 1,
+                            idleSoak: Double? = nil, room: Double = 22, seed: UInt64 = 13) -> [MinuteSample] {
+        var fast = load[0].power, slow = load[0].power, cpu = load[0].cpu
+        var rng = SeededRandom(seed: seed)
+        return load.enumerated().map { i, l in
+            fast += (1 - exp(-1 / 3.0)) * (l.power - fast)
+            slow += (1 - exp(-1 / 60.0)) * (l.power - slow)
+            cpu += (1 - exp(-1 / 3.0)) * (l.cpu - cpu)
+            let soak = l.power < 2 ? (idleSoak ?? (l.closed ? closedSoak : openSoak)) : (l.closed ? closedSoak : openSoak)
+            let die = room + soak * (0.6 * fast + 0.5 * slow + 2.0 * cpu) + rng.next(in: -0.4...0.4)
+            return MinuteSample(timestamp: start.addingTimeInterval(Double(i) * 60), dieMax: die + 6, dieAvg: die, ssd: 30,
+                                battery: room + 0.8 * slow, power: l.power, cpuCores: l.cpu, thermalState: 0, expectedDie: nil,
+                                lidClosed: l.closed)
+        }
+    }
+
+    /// Like 2026-10-05~09: most of the work was done at the desk with the lid open; the rest of the day closed, with an
+    /// evening of the same work done remotely. Same watts, same cores: only the lid tells the two apart.
+    private let deskDay: [(power: Double, cpu: Double, closed: Bool)] = (0..<1440).map { m in
+        switch m {
+        case 540..<780: return (power: 7, cpu: 0.9, closed: false)
+        case 1200..<1290: return (power: 7, cpu: 0.9, closed: true)
+        default: return (power: 0.5, cpu: 0.3, closed: true)
+        }
+    }
+
+    /// Like November: lid closed all day; remote work in the morning and the evening.
+    private let remoteDay: [(power: Double, cpu: Double, closed: Bool)] = (0..<1440).map { m in
+        switch m {
+        case 600..<660, 1200..<1320: return (power: 7, cpu: 0.9, closed: true)
+        default: return (power: 0.5, cpu: 0.3, closed: true)
+        }
+    }
+
+    private let quietDay: [(power: Double, cpu: Double, closed: Bool)] = (0..<1440).map { m in
+        (power: m % 90 < 30 ? 1.4 : 0.4, cpu: 0.3, closed: true)
+    }
+
+    /// Runs the drift check at the end of `samples`, with the baseline window cut from them.
+    private func drift(_ samples: [MinuteSample], reference: ThermalFit?, hasLid: Bool = true) throws -> (reference: ThermalFit?, outcome: DriftCheck.Outcome) {
+        let now = try XCTUnwrap(samples.last).timestamp.addingTimeInterval(60)
+        let window = config.baselineDays * 86400
+        let fallback = try XCTUnwrap(ThermalModel.fit(samples.filter { $0.timestamp >= now.addingTimeInterval(-window) }, excluded: [], minimumMinutes: 1000, now: now))
+        return DriftCheck.run(reference: reference, fallback: fallback, hasLid: hasLid, excluded: [], config: config, now: now) { end in
+            samples.filter { $0.timestamp >= end.addingTimeInterval(-window) && $0.timestamp < end }
+        }
+    }
+
+    /// 2026-10-20 ~ 11-07: the reference's busy minutes were mostly lid-open desk work, later ones lid-closed remote
+    /// work; the same watts ran the die hotter with the lid closed, and the check reported it as worse cooling every
+    /// week. Kept to lid-closed minutes on both sides, nothing has changed.
+    func testLidOpenReferenceDoesNotMakeClosedLidWorkReadAsDrift() throws {
+        let reference = lidMinutes(start: t0, load: Array(repeating: deskDay, count: 14).flatMap { $0 })
+        let frozen = try drift(reference, reference: nil)
+        XCTAssertEqual(frozen.outcome, .frozen)
+        let anchor = try XCTUnwrap(frozen.reference)
+        XCTAssertEqual(anchor.lid, .closed, "most minutes were lid-closed")
+
+        let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: remoteDay, count: 14).flatMap { $0 }, seed: 17)
+        let checked = try drift(later, reference: anchor)
+        guard case let .steady(load?) = checked.outcome else { return XCTFail("expected steady, got \(checked.outcome)") }
+        XCTAssertEqual(load.ratio, 1, accuracy: 0.1)
+        XCTAssertEqual(checked.reference, anchor)
+
+        // Control: the same history without the lid known reads as drift.
+        let blind = { (s: [MinuteSample]) in s.map { var s = $0; s.lidClosed = nil; return s } }
+        let mixedAnchor = try XCTUnwrap(ThermalModel.roomFit(blind(reference), excluded: [], minimumMinutes: 1000))
+        let window = Array(blind(later).suffix(14 * 1440))
+        let mixed = try XCTUnwrap(ThermalModel.loadDrift(window, excluded: [], reference: mixedAnchor))
+        XCTAssertGreaterThan(mixed.ratio, ThermalModel.driftRatio)
+    }
+
+    /// 2026-11-14: two weeks of near-idle (95 % of minutes under 1.7 W). The window's watts term was set by idle minutes
+    /// that warm a little more per watt than busy ones, and read 65 % worse than the reference. Too few busy minutes to
+    /// judge the load: skipped, the reference kept.
+    func testNearIdleWindowIsNotJudgedUnderLoad() throws {
+        let reference = lidMinutes(start: t0, load: Array(repeating: remoteDay, count: 14).flatMap { $0 })
+        let anchor = try XCTUnwrap(try drift(reference, reference: nil).reference)
+        let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: quietDay, count: 14).flatMap { $0 },
+                                           idleSoak: 2.1, seed: 19)
+        let window = Array(later.suffix(14 * 1440))
+        let current = try XCTUnwrap(ThermalModel.roomFit(window, excluded: [], minimumMinutes: 1000, lid: .closed))
+        XCTAssertGreaterThan(current.steadyResistance / anchor.steadyResistance, 1.2, "control: the fitted watts term reads as worse cooling")
+        let checked = try drift(later, reference: anchor)
+        XCTAssertEqual(checked.outcome, .skipped)
+        XCTAssertEqual(checked.reference, anchor)
+    }
+
+    /// Cooling 40 % worse under the same lid and the same kind of work is still reported.
+    func testWorseCoolingWithTheLidClosedStillDrifts() throws {
+        let reference = lidMinutes(start: t0, load: Array(repeating: remoteDay, count: 14).flatMap { $0 })
+        let anchor = try XCTUnwrap(try drift(reference, reference: nil).reference)
+        let later = reference + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: remoteDay, count: 14).flatMap { $0 },
+                                           closedSoak: 1.4 * 1.4, seed: 23)
+        guard case let .drifted(_, load?) = try drift(later, reference: anchor).outcome else { return XCTFail("expected drift") }
+        XCTAssertEqual(load.ratio, 1.4, accuracy: 0.1)
+    }
+
+    /// A window with no busy minutes cannot become the reference: its watts term is not measured.
+    func testReferenceWaitsForLoad() throws {
+        let idle = lidMinutes(start: t0, load: Array(repeating: quietDay, count: 14).flatMap { $0 })
+        let result = try drift(idle, reference: nil)
+        XCTAssertEqual(result.outcome, .waiting)
+        XCTAssertNil(result.reference)
+    }
+
+    /// A reference saved before 0.1.9 does not know the lid. With a lid it mixed both states and is dropped; without
+    /// one it is kept as it was.
+    func testOlderReferenceIsDroppedOnlyWhereThereIsALid() throws {
+        let history = lidMinutes(start: t0, load: Array(repeating: remoteDay, count: 14).flatMap { $0 })
+        var legacy = try XCTUnwrap(ThermalModel.roomFit(history, excluded: [], minimumMinutes: 1000, now: history.last!.timestamp))
+        legacy.lid = nil; legacy.loadedMinutes = nil; legacy.loadedPowerP90 = nil
+        let later = history + lidMinutes(start: t0.addingTimeInterval(14 * 86400), load: Array(repeating: remoteDay, count: 3).flatMap { $0 }, seed: 29)
+
+        let withLid = try drift(later, reference: legacy, hasLid: true)
+        XCTAssertNotEqual(withLid.reference?.fittedAt, legacy.fittedAt, "started over")
+
+        let desktop = later.map { var s = $0; s.lidClosed = nil; return s }
+        let withoutLid = try drift(desktop, reference: legacy, hasLid: false)
+        XCTAssertEqual(withoutLid.reference?.fittedAt, legacy.fittedAt)
+        XCTAssertEqual(withoutLid.reference?.lid, .any)
+        if case .steady = withoutLid.outcome {} else { XCTFail("expected steady, got \(withoutLid.outcome)") }
+    }
+
+    /// A lid state counts once it has held for an hour; a gap of more than five minutes starts the hour again.
+    func testLidMinutesCountAfterAnHourInTheState() {
+        var samples = lidMinutes(start: t0, load: Array(repeating: (power: 0.5, cpu: 0.3, closed: true), count: 30)
+                                 + Array(repeating: (power: 0.5, cpu: 0.3, closed: false), count: 90))
+        samples += lidMinutes(start: t0.addingTimeInterval(130 * 60), load: Array(repeating: (power: 0.5, cpu: 0.3, closed: false), count: 70))
+        let open = ThermalModel.lidMask(samples, .open)!
+        XCTAssertEqual(open.filter { $0 }.count, 30 + 10)
+        XCTAssertFalse(open[89]); XCTAssertTrue(open[90])
+        XCTAssertEqual(ThermalModel.lidMask(samples, .closed)!.filter { $0 }.count, 0)
+        XCTAssertNil(ThermalModel.lidMask(samples, .any))
+        XCTAssertNil(ThermalModel.lidMask(samples, nil))
+    }
+
+    func testLidStateSurvivesStorage() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try HistoryStore(url: dir.appendingPathComponent("history.sqlite"))
+        for (i, closed) in [true, false, nil].enumerated() {
+            var s = minutes(1, start: t0.addingTimeInterval(Double(i) * 60), power: { _ in 1 }, die: { _ in 30 })[0]
+            s.lidClosed = closed
+            store.append(s)
+        }
+        XCTAssertEqual(store.samples(since: t0).map(\.lidClosed), [true, false, nil])
     }
 
     /// The room is the battery at the last quiet minute, held through busy stretches; no battery, no room fit.
@@ -463,6 +619,8 @@ final class DetectionTests: XCTestCase {
         let json = #"{"base":24,"resistance":1.35,"tau":3,"residualMAD":1,"powerP95":8.8,"minutes":4337,"fittedAt":0}"#
         let fit = try JSONDecoder().decode(ThermalFit.self, from: Data(json.utf8))
         XCTAssertEqual(fit.model, 1)
+        XCTAssertNil(fit.lid)
+        XCTAssertNil(fit.loadedMinutes)
         XCTAssertEqual(fit.expected(ThermalInput(power: 8, slowPower: 8, cpu: 3)), 24 + 1.35 * 8, accuracy: 1e-9)
     }
 

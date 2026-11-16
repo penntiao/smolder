@@ -114,6 +114,8 @@ Then open *Settings → General* and turn on **Start at login and restart after 
   warm afternoon is not reported as a cooling problem, but a slow fault building over many hours can be
   absorbed the same way, and a hot room beyond the cap still looks like worse cooling. The weekly drift
   check measures against the room as estimated from the battery while the Mac idles (Macs with a battery only).
+- The drift check can only judge cooling under load, on minutes of one lid state. A Mac that is almost always
+  idle may go weeks without enough busy minutes to be judged.
 - The first 72 hours are a learning period; until then only conservative fixed rules apply.
 
 ## Contributing

@@ -19,6 +19,9 @@ import Foundation
 /// the battery (see `ThermalFilter`); its `base` is then the idle rise over the room. Only the drift check uses it: the
 /// room is cooler or warmer for weeks at a time, and a fit on the die alone puts that into `R` whenever the warm days
 /// happen to be the busy ones.
+///
+/// Drift fits also keep to minutes of one lid state (`lid`): a closed lid covers the keyboard deck, so the same watts
+/// run the die hotter, and a window that mixes the two reads as a change in cooling whenever the mix changes.
 struct ThermalFit: Codable, Equatable {
     static let currentModel = 3
     static let slowTau: Double = 60
@@ -36,12 +39,16 @@ struct ThermalFit: Codable, Equatable {
     var fittedAt: Date
     var model: Int              // 1 = power-only (0.1.0–0.1.2), 2 = no P-core power term, 3 = with it
     var roomReferenced: Bool    // predicts die minus the estimated room, not the die
+    var lid: LidFilter?         // lid state of the minutes fitted; nil for fits from before 0.1.9, which mixed both
+    var loadedMinutes: Int?     // minutes at least `ThermalModel.loadMargin` above the window's median power
+    var loadedPowerP90: Double? // how hard those minutes worked: the top of the load a drift check may judge against
 
     init(base: Double, resistance: Double, tau: Double, slowResistance: Double = 0, cpuCoefficient: Double = 0,
          cpuPowerCoefficient: Double = 0,
          residualMAD: Double, residualP95: Double? = nil, powerP95: Double, minutes: Int, fittedAt: Date, model: Int = ThermalFit.currentModel,
-         roomReferenced: Bool = false) {
+         roomReferenced: Bool = false, lid: LidFilter? = nil, loadedMinutes: Int? = nil, loadedPowerP90: Double? = nil) {
         self.residualP95 = residualP95; self.roomReferenced = roomReferenced
+        self.lid = lid; self.loadedMinutes = loadedMinutes; self.loadedPowerP90 = loadedPowerP90
         self.base = base; self.resistance = resistance; self.tau = tau
         self.slowResistance = slowResistance; self.cpuCoefficient = cpuCoefficient; self.cpuPowerCoefficient = cpuPowerCoefficient
         self.residualMAD = residualMAD; self.powerP95 = powerP95; self.minutes = minutes
@@ -63,6 +70,9 @@ struct ThermalFit: Codable, Equatable {
         fittedAt = try c.decode(Date.self, forKey: .fittedAt)
         model = try c.decodeIfPresent(Int.self, forKey: .model) ?? 1
         roomReferenced = try c.decodeIfPresent(Bool.self, forKey: .roomReferenced) ?? false
+        lid = try c.decodeIfPresent(LidFilter.self, forKey: .lid)
+        loadedMinutes = try c.decodeIfPresent(Int.self, forKey: .loadedMinutes)
+        loadedPowerP90 = try c.decodeIfPresent(Double.self, forKey: .loadedPowerP90)
     }
 
     /// °C per watt once the chassis has fully soaked: what drift checks and the settings pane compare.
@@ -72,6 +82,19 @@ struct ThermalFit: Codable, Equatable {
         base + resistance * input.power + slowResistance * input.slowPower + cpuCoefficient * input.cpu
             + cpuPowerCoefficient * (input.cpuPower ?? 0)
     }
+}
+
+/// Which lid state a drift fit keeps to. `any`: the Mac has no lid.
+enum LidFilter: String, Codable, Equatable {
+    case closed, open, any
+}
+
+/// Load-driven warming of one window's busy minutes, set against what the reference predicts for the same inputs.
+struct LoadDrift: Equatable {
+    var minutes: Int        // busy minutes judged
+    var measured: Double    // median °C the load added (die over the room, less the reference's idle rise)
+    var predicted: Double   // median °C the reference predicts the load adds on the very same minutes
+    var ratio: Double { measured / predicted }
 }
 
 /// Filtered load for one minute.
@@ -91,11 +114,71 @@ enum ThermalModel {
     /// which a median-based spread never sees — and must not widen the typical error.
     static let cpuPowerTailGain = 0.9
 
-    /// Steady-state resistance up more than 20 %, or the idle temperature up more than 8 °C (3 °C over the room for
-    /// room-referenced fits, whose idle rise is a fraction of a degree to begin with).
-    static func hasDrifted(_ fit: ThermalFit, from reference: ThermalFit) -> Bool {
-        let resistanceChange = reference.steadyResistance > 0.1 ? fit.steadyResistance / reference.steadyResistance - 1 : 0
-        return resistanceChange > 0.2 || fit.base - reference.base > (fit.roomReferenced ? 3 : 8)
+    // MARK: Drift
+
+    /// A busy minute: smoothed power at least this far above the window's median. At about 1 °C per watt that is a
+    /// couple of degrees of load-driven warming, well clear of the noise.
+    static let loadMargin: Double = 2
+    /// Busy minutes needed, in the reference window and in the window judged against it. Without them a fit's watts
+    /// term is set by the idle minutes alone, where the small, uneven warming of a nearly idle Mac decides the slope.
+    static let driftMinLoadedMinutes = 180
+    /// Load-driven warming more than 20 % above what the reference predicts for the same minutes reads as drift.
+    static let driftRatio = 1.2
+    /// After the lid opens or closes, the chassis takes about an hour to settle (the slow filter's time constant):
+    /// minutes inside that hour belong to neither state.
+    static let lidSettleMinutes: Double = ThermalFit.slowTau
+
+    /// The idle temperature up more than 8 °C (3 °C over the room for room-referenced fits, whose idle rise is a
+    /// fraction of a degree to begin with). A near-idle window fixes the idle level well, so this one is always judged.
+    static func idleDrifted(_ fit: ThermalFit, from reference: ThermalFit) -> Bool {
+        fit.base - reference.base > (fit.roomReferenced ? 3 : 8)
+    }
+
+    /// The window's busy minutes, measured with the reference as the yardstick: how much the load warmed the die,
+    /// against what the reference predicts for the same inputs. Comparing fitted coefficients instead fails whenever
+    /// the windows worked differently — the watts term of a mostly idle window is set by its idle minutes, and busy
+    /// cores and watts trade heat between their two terms. Busy minutes beyond the load the reference has seen are left
+    /// out. nil when the window has fewer than `driftMinLoadedMinutes` of them.
+    static func loadDrift(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], reference: ThermalFit) -> LoadDrift? {
+        let points = collect(samples, excluded: excluded, tau: reference.tau, useCPUPower: false,
+                             room: reference.roomReferenced, mask: lidMask(samples, reference.lid))
+        guard let idle = Stats.quantile(points.map(\.input.power), 0.5) else { return nil }
+        let ceiling = (reference.loadedPowerP90 ?? reference.powerP95) * 1.1
+        var measured: [Double] = [], predicted: [Double] = []
+        for p in points where p.input.power >= idle + loadMargin && p.input.power <= ceiling {
+            measured.append(p.die - reference.base)
+            predicted.append(reference.expected(p.input) - reference.base)
+        }
+        guard measured.count >= driftMinLoadedMinutes, let m = Stats.quantile(measured, 0.5),
+              let e = Stats.quantile(predicted, 0.5), e > 0.5 else { return nil }
+        return LoadDrift(minutes: measured.count, measured: m, predicted: e)
+    }
+
+    /// The lid state most minutes of the window were in; nil when no minute knows its lid.
+    static func majorityLid(_ samples: [MinuteSample]) -> LidFilter? {
+        let known = samples.compactMap(\.lidClosed)
+        guard !known.isEmpty else { return nil }
+        return known.filter { $0 }.count * 2 >= known.count ? .closed : .open
+    }
+
+    /// Which minutes a fit for `lid` may use: for a lid state, those that have been in it for `lidSettleMinutes`
+    /// without a gap of more than five minutes (what the lid did during a gap is unknown). nil keeps every minute.
+    static func lidMask(_ samples: [MinuteSample], _ lid: LidFilter?) -> [Bool]? {
+        let want: Bool
+        switch lid {
+        case .closed?: want = true
+        case .open?: want = false
+        case .any?, nil: return nil
+        }
+        var since: Date?
+        var previous: Date?
+        return samples.map { s in
+            if let previous, s.timestamp.timeIntervalSince(previous) > 300 { since = nil }
+            previous = s.timestamp
+            guard s.lidClosed == want else { since = nil; return false }
+            if since == nil { since = s.timestamp }
+            return s.timestamp.timeIntervalSince(since!) >= lidSettleMinutes * 60
+        }
     }
 
     /// Robust fit over the given minutes. Minutes inside `excluded` (open or past incidents) are ignored,
@@ -119,35 +202,49 @@ enum ThermalModel {
 
     /// Model 2 on the die's rise over the estimated room, for the drift check. Minutes with no room estimate yet are
     /// left out; nil on a Mac without a battery. Always model 2, so that two of these fits compare like with like.
-    static func roomFit(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], minimumMinutes: Int, now: Date = Date()) -> ThermalFit? {
-        fit(samples, excluded: excluded, minimumMinutes: minimumMinutes, now: now, useCPUPower: false, room: true)
+    /// With `lid` closed or open, only minutes settled in that state are used (see `lidMask`).
+    static func roomFit(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], minimumMinutes: Int, now: Date = Date(),
+                        lid: LidFilter? = nil) -> ThermalFit? {
+        var fit = fit(samples, excluded: excluded, minimumMinutes: minimumMinutes, now: now, useCPUPower: false, room: true,
+                      mask: lidMask(samples, lid))
+        fit?.lid = lid
+        return fit
     }
 
     private static func fit(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], minimumMinutes: Int, now: Date, useCPUPower: Bool,
-                            room: Bool = false) -> ThermalFit? {
+                            room: Bool = false, mask: [Bool]? = nil) -> ThermalFit? {
         var best: ThermalFit?
         for tau in tauCandidates {
-            var xs: [ThermalInput] = [], ys: [Double] = []
-            var filter = ThermalFilter()
-            var warmup = 0
-            for s in samples {
-                guard let die = s.dieAvg, s.power != nil, !useCPUPower || s.cpuPower != nil else { filter.reset(); continue }
-                let restarted = filter.isReset(before: s.timestamp)
-                guard let input = filter.update(s, tau: tau) else { continue }
-                // A gap (sleep, app not running) resets the filter; skip a few minutes while it settles.
-                if restarted { warmup = Int(tau * 3) }
-                if warmup > 0 { warmup -= 1; continue }
-                if excluded.contains(where: { $0.contains(s.timestamp) }) { continue }
-                if room, input.room == nil { continue }
-                xs.append(input)
-                ys.append(die - (room ? input.room! : 0))
-            }
-            guard xs.count >= minimumMinutes,
-                  var candidate = robustFit(x: xs, y: ys, tau: tau, useCPUPower: useCPUPower, now: now) else { continue }
+            let points = collect(samples, excluded: excluded, tau: tau, useCPUPower: useCPUPower, room: room, mask: mask)
+            guard points.count >= minimumMinutes,
+                  var candidate = robustFit(x: points.map(\.input), y: points.map(\.die), tau: tau, useCPUPower: useCPUPower, now: now)
+            else { continue }
             candidate.roomReferenced = room
             if best == nil || candidate.residualMAD < best!.residualMAD { best = candidate }
         }
         return best
+    }
+
+    /// The filtered inputs and die temperature (over the room, with `room`) of every usable minute. The filter runs
+    /// through every minute, `mask` only decides which are kept, so the inputs stay continuous across a lid change.
+    private static func collect(_ samples: [MinuteSample], excluded: [ClosedRange<Date>], tau: Double, useCPUPower: Bool,
+                                room: Bool, mask: [Bool]?) -> [(input: ThermalInput, die: Double)] {
+        var points: [(input: ThermalInput, die: Double)] = []
+        var filter = ThermalFilter()
+        var warmup = 0
+        for (i, s) in samples.enumerated() {
+            guard let die = s.dieAvg, s.power != nil, !useCPUPower || s.cpuPower != nil else { filter.reset(); continue }
+            let restarted = filter.isReset(before: s.timestamp)
+            guard let input = filter.update(s, tau: tau) else { continue }
+            // A gap (sleep, app not running) resets the filter; skip a few minutes while it settles.
+            if restarted { warmup = Int(tau * 3) }
+            if warmup > 0 { warmup -= 1; continue }
+            if let mask, !mask[i] { continue }
+            if excluded.contains(where: { $0.contains(s.timestamp) }) { continue }
+            if room, input.room == nil { continue }
+            points.append((input, die - (room ? input.room! : 0)))
+        }
+        return points
     }
 
     /// Least squares, drop points beyond 3 robust sigmas, refit once.
@@ -163,13 +260,17 @@ enum ThermalModel {
         for (i, r) in residuals.enumerated() where abs(r) <= cutoff { kRows.append(rows[i]); ky.append(y[i]) }
         guard let fit = nonNegativeFit(rows: kRows, y: ky) else { return nil }
         let finalResiduals = zip(rows, y).map { $1 - predict(fit, $0) }
+        let powers = x.map(\.power)
+        let busyLine = (Stats.quantile(powers, 0.5) ?? 0) + loadMargin
+        let busy = powers.filter { $0 >= busyLine }
         return ThermalFit(
             base: fit[0], resistance: fit[1], tau: tau, slowResistance: fit[2],
             cpuCoefficient: useCPUPower ? fit[4] : fit[3], cpuPowerCoefficient: useCPUPower ? fit[3] : 0,
             residualMAD: Stats.mad(finalResiduals) ?? mad,
             residualP95: Stats.quantile(finalResiduals.map(abs), 0.95),
             powerP95: Stats.quantile(x.map(\.power), 0.95) ?? 0,
-            minutes: x.count, fittedAt: now, model: useCPUPower ? 3 : 2)
+            minutes: x.count, fittedAt: now, model: useCPUPower ? 3 : 2,
+            loadedMinutes: busy.count, loadedPowerP90: Stats.quantile(busy, 0.9))
     }
 
     private static func predict(_ coefficients: [Double], _ row: [Double]) -> Double {
