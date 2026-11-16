@@ -40,6 +40,7 @@ private struct Reading {
     var lidClosed: Bool?
     var fanRPM: Double?
     var screenHolders: Set<String>?
+    var screens: ScreenState.Reading?
 }
 
 /// Persisted between launches.
@@ -170,10 +171,11 @@ final class Monitor: ObservableObject {
         let temps = hid.read()
         let power = smc?.float("PSTR")
         let fan = machine.fans > 0 ? (0..<machine.fans).compactMap { smc?.fanRPM($0) }.max() : nil
+        let screens = ScreenState.read()
         readings.append(Reading(temperatures: temps, power: power, cpuCores: cpu.sample(), pressure: pressure.read(),
-                                screenOn: ScreenState.isOn(), cpuPower: smc?.float(SMC.cpuPowerKey),
+                                screenOn: screens.map { $0.builtinLit || $0.otherLit > 0 }, cpuPower: smc?.float(SMC.cpuPowerKey),
                                 lidClosed: machine.hasLid ? LidState.isClosed() : nil, fanRPM: fan,
-                                screenHolders: ScreenHolders.read()))
+                                screenHolders: ScreenHolders.read(), screens: screens))
     }
 
     private func sampleProcesses(now: Date) {
@@ -202,6 +204,7 @@ final class Monitor: ObservableObject {
 
         let screens = readings.compactMap(\.screenOn)
         let lids = readings.compactMap(\.lidClosed)
+        let screenMinute = ScreenState.minute(readings.map(\.screens), hasBuiltin: machine.hasBuiltinDisplay)
         var sample = MinuteSample(
             timestamp: start,
             dieMax: readings.compactMap(\.temperatures.dieMax).max(),
@@ -215,7 +218,9 @@ final class Monitor: ObservableObject {
             screenOn: screens.isEmpty ? nil : screens.contains(true),
             cpuPower: Stats.mean(readings.compactMap(\.cpuPower)),
             lidClosed: lids.isEmpty ? nil : !lids.contains(false),
-            fanRPM: Stats.mean(readings.compactMap(\.fanRPM)))
+            fanRPM: Stats.mean(readings.compactMap(\.fanRPM)),
+            builtinScreen: screenMinute.builtin,
+            otherScreens: screenMinute.others)
         thermal.excluded = tracker.excludedRanges
         sample.expectedDie = thermal.observe(sample, config: config.detection).map { $0 + thermal.ambientOffset(at: now, config: config.detection) }
 
@@ -527,7 +532,7 @@ final class Monitor: ObservableObject {
                                                   lines: [L("Using %@ cores on average for %@", Format.cores(0.98), Format.duration(1800)), L("Usually close to idle")],
                                                   programs: ["/appstoreagent"], openedAt: opened, lastAbnormalAt: now)],
                          recentIncidents: [], fit: nil, lastHeartbeat: now)
-        live.machine = Machine(name: "MacBook Air (13-inch, M4, 2025)", identifier: "Mac16,12", hasLid: true, hasBattery: true, fans: 0)
+        live.machine = Machine(name: "MacBook Air (13-inch, M4, 2025)", identifier: "Mac16,12", hasLid: true, hasBattery: true, fans: 0, hasBuiltinDisplay: true)
     }
 
     // MARK: - Helpers

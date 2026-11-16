@@ -890,6 +890,23 @@ final class DetectionTests: XCTestCase {
         XCTAssertEqual(ScreenHolders.seconds([nil, nil]), [:])
         XCTAssertEqual(ScreenHolders.seconds([[], []]), [:])
     }
+
+    func testScreenMinuteKeepsBuiltInApartFromOtherScreens() {
+        typealias R = ScreenState.Reading
+        // Closed MacBook, a remote session's virtual display lit for part of the minute.
+        let closed: [R?] = [R(builtinLit: false, otherLit: 0), R(builtinLit: false, otherLit: 1), nil]
+        XCTAssertEqual(ScreenState.minute(closed, hasBuiltin: true).builtin, false)
+        XCTAssertEqual(ScreenState.minute(closed, hasBuiltin: true).others, 1)
+        // Open MacBook in use.
+        XCTAssertEqual(ScreenState.minute([R(builtinLit: true, otherLit: 0)], hasBuiltin: true).builtin, true)
+        // Mac mini: no built-in screen is nil, not "dark"; a headless one shows zero other screens.
+        XCTAssertNil(ScreenState.minute([R(builtinLit: false, otherLit: 0)], hasBuiltin: false).builtin)
+        XCTAssertEqual(ScreenState.minute([R(builtinLit: false, otherLit: 0)], hasBuiltin: false).others, 0)
+        XCTAssertEqual(ScreenState.minute([R(builtinLit: false, otherLit: 2)], hasBuiltin: false).others, 2)
+        // No reading worked: unknown, not "off".
+        XCTAssertNil(ScreenState.minute([nil, nil], hasBuiltin: true).builtin)
+        XCTAssertNil(ScreenState.minute([nil, nil], hasBuiltin: true).others)
+    }
 }
 
 /// Deterministic noise so the scenarios are reproducible.

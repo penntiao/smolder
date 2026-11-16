@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2
+
+- Screens are now recorded by kind, so the history means the same on a MacBook and a Mac mini. New columns:
+  `builtin_screen` — the Mac's own panel lit (MacBook, iMac; empty on a Mac without one) — and `other_screens`
+  — monitors, dummy plugs and the virtual displays remote-desktop apps create, which Smolder cannot tell apart.
+  With `screen_holders` from 0.3.1 they say whether someone was at the Mac or connected remotely; see
+  *docs/how-it-works.md → Screens and who lit them*. *This Mac* and `--probe` say whether there is a built-in
+  screen. `screen_on` and every detector are unchanged.
+
 ## 0.3.1
 
 - Each minute now records which programs kept a screen awake, and for how many seconds (new `screen_holders`

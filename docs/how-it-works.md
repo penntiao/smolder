@@ -13,6 +13,30 @@ the battery gives the room estimate and its own hard limit; fans are shown (SMC 
 heat alert on a Mac with fans says to check them. Fan speed is deliberately not an input to the thermal model:
 a fan that stopped would then explain its own heat.
 
+### Screens and who lit them
+
+Each minute records three things about screens, the same way on every Mac:
+
+- `builtin_screen`: whether the Mac's own panel was lit (MacBook, iMac). A MacBook's panel can only be lit with
+  the lid open. On a Mac without one (Mac mini, Mac Studio) the column is empty, not "off".
+- `other_screens`: the most other screens lit at once. This counts anything macOS drives as a display — a
+  monitor, an HDMI dummy plug, or a virtual display that a remote-desktop app creates when no screen is lit
+  (UU Remote does this on a closed MacBook and on a headless Mac mini). Smolder cannot tell these apart.
+- `screen_holders` (its own table): for each program that held a display-sleep assertion, how many seconds of
+  the minute it held it — a video, a presentation, a remote session (UU Remote's is `UURemoteServer`).
+
+Read together:
+
+| Mac | Someone at the Mac | A remote session |
+|---|---|---|
+| MacBook, lid open | `builtin_screen` = 1 | the remote app in `screen_holders` |
+| MacBook, lid closed | — (cannot be) | `other_screens` ≥ 1 and the remote app in `screen_holders` |
+| Mac mini, no monitor | — (nothing to look at) | `other_screens` ≥ 1 (virtual display) and the remote app in `screen_holders` |
+| Mac mini with a monitor or dummy plug | `other_screens` ≥ 1 and no remote app in `screen_holders` | the remote app in `screen_holders` |
+
+On a Mac mini with a monitor, a lit screen alone does not say who is using it; only `screen_holders` does.
+`screen_on` (any screen lit) stays as before and is what the idle-power check uses.
+
 ## Why not a temperature threshold
 
 The chip temperature of an Apple Silicon Mac is mostly a function of power draw. On a fanless MacBook Air

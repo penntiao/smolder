@@ -131,6 +131,8 @@
 "Fan %@" = "风扇 %@";
 "lid" = "有盖子";
 "no lid" = "没有盖子";
+"built-in screen" = "自带屏幕";
+"no built-in screen" = "没有自带屏幕";
 "battery" = "有电池";
 "no battery" = "没有电池";
 "fanless" = "无风扇";

@@ -6,17 +6,21 @@ import IOKit.ps
 /// and what it says depend on the hardware:
 /// - a lid (MacBook): the drift check compares minutes of one lid state, since a closed lid runs hotter;
 /// - a battery: the room is estimated from it, and it has its own hard limit;
-/// - fans (Mac mini, Mac Studio, MacBook Pro): their speed is shown, and an alert about heat says to check them.
+/// - fans (Mac mini, Mac Studio, MacBook Pro): their speed is shown, and an alert about heat says to check them;
+/// - a screen of its own (MacBook, iMac): each minute records whether it was lit apart from any other screen.
 struct Machine: Codable, Equatable {
     var name: String?        // "MacBook Air (13-inch, M4, 2025)", "Mac mini (2024)"
     var identifier: String?  // "Mac16,12"
     var hasLid: Bool
     var hasBattery: Bool
     var fans: Int
+    var hasBuiltinDisplay = false
 
     static func detect(smc: SMC?) -> Machine {
-        Machine(name: productName(), identifier: sysctlString("hw.model"), hasLid: LidState.isClosed() != nil,
-                hasBattery: hasInternalBattery(), fans: smc?.fanCount() ?? 0)
+        let hasLid = LidState.isClosed() != nil
+        return Machine(name: productName(), identifier: sysctlString("hw.model"), hasLid: hasLid,
+                       hasBattery: hasInternalBattery(), fans: smc?.fanCount() ?? 0,
+                       hasBuiltinDisplay: hasLid || ScreenState.hasBuiltinDisplay())
     }
 
     /// One line for `--probe` and the settings pane.
@@ -24,6 +28,7 @@ struct Machine: Codable, Equatable {
         var parts = [name ?? identifier ?? "Mac"]
         if let identifier, name != nil { parts.append(identifier) }
         parts.append(hasLid ? L("lid") : L("no lid"))
+        parts.append(hasBuiltinDisplay ? L("built-in screen") : L("no built-in screen"))
         parts.append(hasBattery ? L("battery") : L("no battery"))
         parts.append(fans == 0 ? L("fanless") : fans == 1 ? L("1 fan") : L("%d fans", fans))
         return parts.joined(separator: " · ")

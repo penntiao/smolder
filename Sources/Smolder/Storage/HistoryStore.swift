@@ -16,6 +16,8 @@ struct MinuteSample: Codable, Equatable {
     var cpuPower: Double? = nil // P-core cluster power, watts (SMC PP0b); nil where the Mac has no such key
     var lidClosed: Bool? = nil  // the lid was closed all minute; false if it was open at any reading; nil without a lid or before 0.1.9
     var fanRPM: Double? = nil   // fastest fan, mean over the minute; nil on a fanless Mac or before 0.2.0
+    var builtinScreen: Bool? = nil // the Mac's own screen (MacBook, iMac) was lit at some reading; nil on a Mac without one or before 0.3.2
+    var otherScreens: Int? = nil   // most other screens lit at once: monitors, dummy plugs, remote-desktop virtual displays; nil before 0.3.2
 }
 
 final class HistoryStore {
@@ -35,13 +37,16 @@ final class HistoryStore {
                 ts INTEGER PRIMARY KEY,
                 die_max REAL, die_avg REAL, ssd REAL, battery REAL,
                 power REAL, cpu REAL, thermal INTEGER NOT NULL DEFAULT 0,
-                expected_die REAL, screen_on INTEGER, cpu_power REAL, lid_closed INTEGER, fan_rpm REAL
+                expected_die REAL, screen_on INTEGER, cpu_power REAL, lid_closed INTEGER, fan_rpm REAL,
+                builtin_screen INTEGER, other_screens INTEGER
             )
             """)
         if !hasColumn("minutes", "screen_on") { try exec("ALTER TABLE minutes ADD COLUMN screen_on INTEGER") }
         if !hasColumn("minutes", "cpu_power") { try exec("ALTER TABLE minutes ADD COLUMN cpu_power REAL") }
         if !hasColumn("minutes", "lid_closed") { try exec("ALTER TABLE minutes ADD COLUMN lid_closed INTEGER") }
         if !hasColumn("minutes", "fan_rpm") { try exec("ALTER TABLE minutes ADD COLUMN fan_rpm REAL") }
+        if !hasColumn("minutes", "builtin_screen") { try exec("ALTER TABLE minutes ADD COLUMN builtin_screen INTEGER") }
+        if !hasColumn("minutes", "other_screens") { try exec("ALTER TABLE minutes ADD COLUMN other_screens INTEGER") }
         // Average cores per program per 10-minute bucket (only >= 0.01), used to learn each program's own normal
         try exec("""
             CREATE TABLE IF NOT EXISTS process_usage (
@@ -147,7 +152,7 @@ final class HistoryStore {
 
     func append(_ s: MinuteSample) {
         queue.sync {
-            let sql = "INSERT OR REPLACE INTO minutes (ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on, cpu_power, lid_closed, fan_rpm) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            let sql = "INSERT OR REPLACE INTO minutes (ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on, cpu_power, lid_closed, fan_rpm, builtin_screen, other_screens) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
@@ -160,6 +165,8 @@ final class HistoryStore {
             bind(stmt, 11, s.cpuPower)
             if let closed = s.lidClosed { sqlite3_bind_int(stmt, 12, closed ? 1 : 0) } else { sqlite3_bind_null(stmt, 12) }
             bind(stmt, 13, s.fanRPM)
+            if let lit = s.builtinScreen { sqlite3_bind_int(stmt, 14, lit ? 1 : 0) } else { sqlite3_bind_null(stmt, 14) }
+            if let n = s.otherScreens { sqlite3_bind_int(stmt, 15, Int32(n)) } else { sqlite3_bind_null(stmt, 15) }
             sqlite3_step(stmt)
         }
     }
@@ -167,7 +174,7 @@ final class HistoryStore {
     func samples(since: Date) -> [MinuteSample] {
         queue.sync {
             var result: [MinuteSample] = []
-            let sql = "SELECT ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on, cpu_power, lid_closed, fan_rpm FROM minutes WHERE ts >= ? ORDER BY ts"
+            let sql = "SELECT ts, die_max, die_avg, ssd, battery, power, cpu, thermal, expected_die, screen_on, cpu_power, lid_closed, fan_rpm, builtin_screen, other_screens FROM minutes WHERE ts >= ? ORDER BY ts"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(stmt) }
@@ -178,7 +185,8 @@ final class HistoryStore {
                     dieMax: column(stmt, 1), dieAvg: column(stmt, 2), ssd: column(stmt, 3), battery: column(stmt, 4),
                     power: column(stmt, 5), cpuCores: column(stmt, 6),
                     thermalState: Int(sqlite3_column_int(stmt, 7)), expectedDie: column(stmt, 8),
-                    screenOn: column(stmt, 9).map { $0 != 0 }, cpuPower: column(stmt, 10), lidClosed: column(stmt, 11).map { $0 != 0 }, fanRPM: column(stmt, 12)))
+                    screenOn: column(stmt, 9).map { $0 != 0 }, cpuPower: column(stmt, 10), lidClosed: column(stmt, 11).map { $0 != 0 }, fanRPM: column(stmt, 12),
+                    builtinScreen: column(stmt, 13).map { $0 != 0 }, otherScreens: column(stmt, 14).map { Int($0) }))
             }
             return result
         }

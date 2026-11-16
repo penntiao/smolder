@@ -148,6 +148,9 @@ enum Probe {
         print(Machine.detect(smc: smc).summary)
         print("die max \(t.dieMax.map { String(format: "%.1f", $0) } ?? "–") avg \(t.dieAvg.map { String(format: "%.1f", $0) } ?? "–")  ssd \(t.ssd.map { String(format: "%.1f", $0) } ?? "–")  battery \(t.battery.map { String(format: "%.1f", $0) } ?? "–")")
         print("power \(smc?.float("PSTR").map { String(format: "%.2f W", $0) } ?? "–")  P-cores \(smc?.float(SMC.cpuPowerKey).map { String(format: "%.2f W", $0) } ?? "–")  cpu \(cpu.sample().map { String(format: "%.2f cores", $0) } ?? "–")  pressure \(pressure.read())  screen \(ScreenState.isOn().map { $0 ? "on" : "off" } ?? "–")  lid \(LidState.isClosed().map { $0 ? "closed" : "open" } ?? "–")  fan \(smc.map { s in (0..<s.fanCount()).compactMap { s.fanRPM($0) }.max().map { String(format: "%.0f rpm", $0) } ?? "–" } ?? "–")")
+        let screens = ScreenState.read()
+        let builtin = ScreenState.hasBuiltinDisplay() ? (screens.map { $0.builtinLit ? "lit" : "dark" } ?? "–") : "none"
+        print("screens: built-in \(builtin), others lit \(screens.map { String($0.otherLit) } ?? "–")")
         print("screen kept awake by \(ScreenHolders.read().map { $0.isEmpty ? "nobody" : $0.sorted().joined(separator: ", ") } ?? "–")")
         for p in procs.sample().prefix(5) { print(String(format: "  %6d  %.2f  %@", p.pid, p.cores, p.name)) }
     }
