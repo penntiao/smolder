@@ -68,6 +68,10 @@ Smolder 是一个菜单栏小软件，给那些常年开着、没人盯着看的
 在终端运行 `/Applications/Smolder.app/Contents/MacOS/Smolder --test-notify`，可以给每个通知去处各发一条测试消息。
 数据格式和接法：[docs/integrations.md](docs/integrations.md)（英文）。
 
+## 重启之后：Smolder Unlock
+
+Smolder 盯的是一台正在运行的 Mac。重启后的 Mac 停在开机密码界面，上面什么都没跑。[**Smolder Unlock**](unlock/README.zh-CN.md) 是装在你自己服务器上的搭档：一个放在你自己登录后面的页面，用手机输一次密码把它解开；Mac 在等你时发一条提醒。它是一份带安装程序的模板，人和 AI Agent 都能照着部署（`brew install penntiao/tap/smolder-unlock`）。
+
 ## 安装
 
 需要 Apple 芯片的 Mac，macOS 14 Sonoma 或更新版本。

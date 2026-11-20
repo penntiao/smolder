@@ -1,0 +1,25 @@
+{
+  "lang": "en",
+  "mac": {
+    "user": "yourname",
+    "lan_ip": "192.168.1.20"
+  },
+  "server": {
+    "ssh": "root@203.0.113.10",
+    "install_dir": "/opt/smolder-unlock",
+    "listen_port": 3112
+  },
+  "link": {
+    "mode": "reverse",
+    "mac_port_on_server": 39930,
+    "device_port_on_server": 39931
+  },
+  "cloudflare": {
+    "zone": "example.com",
+    "hostname": "mac.example.com",
+    "emails": ["you@example.com"]
+  },
+  "notify": {
+    "telegram": {"chat_id": "123456789"}
+  }
+}

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f5f3ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f0f0e" media="(prefers-color-scheme: dark)">
+<title>Mac</title>
+<style>
+:root{--bg:#f5f3ef;--ink:#1a1917;--mute:#8b857b;--line:#dcd6cb;--field:#fffdf9;--ok:#2e7d5a;--warn:#b7791f;--bad:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#0f0f0e;--ink:#f0ece5;--mute:#8a847a;--line:#2c2a27;--field:#191817;--ok:#6fcf9f;--warn:#e3b35e;--bad:#f0796b}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:17px/1.4 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;display:grid;place-items:center;padding:env(safe-area-inset-top) 24px env(safe-area-inset-bottom)}
+main{width:100%;max-width:320px;text-align:center;transform:translateY(-6vh)}
+#mark{width:44px;height:44px;margin:0 auto 22px;position:relative}
+#mark i{position:absolute;inset:15px;border-radius:50%;background:var(--mute);transition:background .5s,inset .5s cubic-bezier(.3,1.4,.5,1)}
+#mark::after{content:"";position:absolute;inset:15px;border-radius:50%;border:1.5px solid var(--mute);opacity:0}
+main[data-tone=ok] #mark i{background:var(--ok)}main[data-tone=warn] #mark i{background:var(--warn)}main[data-tone=bad] #mark i{background:var(--bad)}
+main[data-tone=ok] #mark::after{border-color:var(--ok)}main[data-tone=warn] #mark::after{border-color:var(--warn)}
+main[data-live] #mark::after{animation:ring 2.2s ease-out infinite}
+@keyframes ring{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(3.2)}}
+main[data-done] h1{font-size:22px;font-weight:600;letter-spacing:.01em;margin:0;min-height:31px}
+p{margin:6px 0 0;color:var(--mute);font-size:15px;min-height:21px}
+h1,p{transition:opacity .25s}
+.swap{opacity:0}
+form{position:relative;margin:26px 0 0;height:54px;transition:opacity .35s,transform .35s cubic-bezier(.3,1.2,.5,1),height .35s,margin .35s}
+form[hidden]{display:block;opacity:0;transform:scale(.96);height:0;margin-top:0;pointer-events:none;visibility:hidden}
+input{width:100%;height:54px;padding:0 56px 0 22px;font:inherit;font-size:18px;letter-spacing:.06em;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:27px;outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none}
+input::placeholder{letter-spacing:0;color:var(--mute);opacity:.7}
+input:focus{border-color:var(--ink);box-shadow:0 0 0 4px color-mix(in srgb,var(--ink) 8%,transparent)}
+button{position:absolute;right:6px;top:6px;width:42px;height:42px;border:0;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;cursor:pointer;transition:transform .15s,opacity .2s}
+button:active{transform:scale(.92)}
+button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:opacity .15s}
+form.empty button{opacity:.25}
+#fill{position:absolute;inset:0;border-radius:27px;pointer-events:none;--p:0;opacity:0;transition:opacity .2s;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--ok) 18%,var(--field)) 0%,color-mix(in srgb,var(--ok) 55%,var(--field)) 55%,var(--ok) 100%);
+  clip-path:inset(0 calc(100% - var(--p)*100%) 0 0 round 27px)}
+#fill::after{content:"";position:absolute;top:0;bottom:0;left:calc(var(--p)*100% - 46px);width:46px;background:linear-gradient(90deg,transparent,color-mix(in srgb,#fff 38%,transparent));opacity:calc(1 - var(--done,0))}
+#said{position:absolute;inset:0;display:grid;place-items:center;font-size:17px;font-weight:600;letter-spacing:.04em;color:var(--bg);opacity:0;pointer-events:none;transition:opacity .22s}
+form.busy input,form.done input{color:transparent;caret-color:transparent}
+form.busy input::placeholder,form.done input::placeholder{color:transparent}
+form.busy button,form.done button{opacity:0}
+form.busy #fill,form.done #fill{opacity:1}
+form.done input{border-color:transparent}
+form.done #fill{--done:1}
+form.done #said{opacity:1}
+form.shake{animation:shake .42s cubic-bezier(.36,.07,.19,.97)}
+@keyframes shake{15%,85%{transform:translateX(-3px)}30%,70%{transform:translateX(7px)}45%{transform:translateX(-9px)}60%{transform:translateX(9px)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main id="m" data-live aria-live="polite">
+  <div id="mark"><i></i></div>
+  <h1 id="t"></h1>
+  <p id="s"></p>
+  <form id="f" class="empty" hidden autocomplete="off">
+    <input id="pw" type="password" placeholder="" aria-label="" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+    <span id="fill" style="--p:0"></span><span id="said"></span>
+    <button aria-label=""><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+  </form>
+</main>
+<script>
+const $=id=>document.getElementById(id),m=$("m"),f=$("f"),pw=$("pw");
+let shown="",shakenAt=0,sending=false;
+const ZH=(navigator.language||"").toLowerCase().startsWith("zh");
+const L=ZH?{pw:"开机密码",go:"解锁",said:"可以远控了",trying:"解锁中",waking:n=>"正在叫醒 "+n,unlocked:"已解锁",ready:"可以远控了",ok:"一切正常",
+  link:["家里断线了","恢复后再来"],silent:["Mac 没有应答","关机或断网"],error:["读不到状态","稍后再看"],out:["错了 3 次","15 分钟后再试"],
+  wrong:n=>["密码不对","还能试 "+n+" 次"],miss:["没连上","再试一次"],wait:"等待开机密码"}
+:{pw:"Password",go:"Unlock",said:"Ready for remote login",trying:"Unlocking",waking:n=>"Waking it up "+n,unlocked:"Unlocked",ready:"Ready for remote login",ok:"All good",
+  link:["Home is offline","Come back when it is up"],silent:["The Mac does not answer","Off, or off the network"],error:["Cannot read its status","Try again shortly"],out:["Three wrong tries","Try again in 15 minutes"],
+  wrong:n=>["Wrong password",n+(n===1?" try left":" tries left")],miss:["Could not reach it","Try once more"],wait:"Waiting for the password"};
+document.documentElement.lang=ZH?"zh-CN":"en";pw.placeholder=L.pw;pw.setAttribute("aria-label",L.pw);$("said").textContent=L.said;f.querySelector("button").setAttribute("aria-label",L.go);
+function view(s){
+  const p=s.probe,j=s.job,r=p&&p.rung,ph=j&&j.phase;
+  if(sending||ph==="trying")return{tone:"warn",t:L.trying,s:j&&j.attempt>1?L.waking(j.attempt+"/"+j.tries):"",live:1,field:1,busy:1};
+  if(ph==="accepted"&&r!=="ok")return{tone:"ok",t:L.unlocked,s:"",field:1,done:1};
+  if(!p)return{tone:"",t:"",s:"",live:1};
+  if(r==="ok")return{tone:"ok",t:L.ok,s:""};
+  if(r==="up")return{tone:"ok",t:L.unlocked,s:L.ready};
+  if(r==="link")return{tone:"bad",t:L.link[0],s:L.link[1]};
+  if(r==="silent")return{tone:"bad",t:L.silent[0],s:L.silent[1]};
+  if(r==="error")return{tone:"bad",t:L.error[0],s:L.error[1]};
+  if(s.wrongLeft<=0)return{tone:"bad",t:L.out[0],s:L.out[1]};
+  if(ph==="wrong"){const w=L.wrong(s.wrongLeft);return{tone:"warn",t:w[0],s:w[1],field:1,shake:j.at,live:1}}
+  if(ph==="unreachable")return{tone:"warn",t:L.miss[0],s:L.miss[1],field:1,live:1};
+  return{tone:"warn",t:L.wait,s:"",field:1,live:1};
+}
+let last={},fast=false;
+const fill=$("fill");let run=null;
+function setP(x){fill.style.setProperty("--p",x.toFixed(4))}
+function startFill(T){ // paced by how long real unlocks took: 92% at T seconds, then ever slower until the answer comes
+  if(run)return;run={t0:performance.now(),T:Math.max(1.5,T)*1000,p:0,end:null};
+  (function step(now){
+    if(!run)return;
+    if(run.end){const k=Math.min(1,(now-run.end.t)/run.end.d),e=1-Math.pow(1-k,3);setP(run.end.from+(run.end.to-run.end.from)*e);
+      if(k>=1){const cb=run.end.cb;run=null;cb&&cb();return}}
+    else{const x=(now-run.t0)/run.T;run.p=x<1?.92*(1-Math.pow(1-x,1.6)):.92+.07*(1-Math.exp(-(x-1)*1.2));setP(run.p)}
+    setTimeout(()=>step(performance.now()),16)})(performance.now());
+}
+function endFill(to,d,cb){if(!run){setP(to);cb&&cb();return}run.end={t:performance.now(),d,from:run.p,to,cb}}
+function render(s){
+  last=s;const v=view(s),key=v.t+"|"+v.s;
+  m.dataset.tone=v.tone;
+  v.live?m.setAttribute("data-live",""):m.removeAttribute("data-live");
+  if(key!==shown){
+    const first=!shown;shown=key;
+    if(v.done&&run){const w=()=>{run?setTimeout(w,60):($("t").textContent=v.t,$("s").textContent=v.s)};w()}
+    else if(first||v.done||v.busy){$("t").textContent=v.t;$("s").textContent=v.s}
+    else{$("t").classList.add("swap");$("s").classList.add("swap");
+      setTimeout(()=>{$("t").textContent=v.t;$("s").textContent=v.s;$("t").classList.remove("swap");$("s").classList.remove("swap")},160)}
+  }
+  const wasHidden=f.hidden;f.hidden=!v.field;
+  pw.readOnly=!!v.busy||!!v.done;
+  if(v.busy){f.classList.add("busy");f.classList.remove("done");startFill(s.expect||4.5)}
+  else if(v.done){if(!f.classList.contains("done")){f.classList.add("busy");endFill(1,260,()=>{f.classList.remove("busy");f.classList.add("done")})}}
+  else{f.classList.remove("done");if(f.classList.contains("busy"))endFill(0,220,()=>f.classList.remove("busy"))}
+  if(v.done&&!f.dataset.buzzed){f.dataset.buzzed=1;if(navigator.vibrate)navigator.vibrate([20,40,20])}
+  if(!v.done)delete f.dataset.buzzed;
+  if(v.field&&wasHidden&&!v.busy&&!v.done)setTimeout(()=>pw.focus({preventScroll:true}),350);
+  if(v.shake&&v.shake!==shakenAt){shakenAt=v.shake;f.classList.remove("shake");void f.offsetWidth;f.classList.add("shake");if(navigator.vibrate)navigator.vibrate(60);pw.focus({preventScroll:true})}
+  fast=!!v.busy;
+}
+async function poll(){
+  try{const r=await fetch("/api/status",{cache:"no-store"});if(r.ok)render(await r.json());else location.reload()}catch(e){}
+}
+pw.addEventListener("input",()=>f.classList.toggle("empty",!pw.value));
+f.addEventListener("submit",async e=>{
+  e.preventDefault();const v=pw.value;if(!v||sending||fast)return;
+  sending=true;pw.blur();render(last);
+  try{const r=await fetch("/api/unlock",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:v})});
+    pw.value="";f.classList.add("empty");sending=false;if(r.status===202)render(await r.json());else render(last)}
+  catch(e){sending=false;render(last)}
+});
+(function loop(){(document.hidden?Promise.resolve():poll()).finally(()=>setTimeout(loop,fast||sending?350:2500))})();
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)poll()});
+</script>
+</body>
+</html>

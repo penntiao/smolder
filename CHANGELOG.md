@@ -1,5 +1,12 @@
 # Changelog
 
+## Smolder Unlock 0.1.0
+
+New companion, in `unlock/`: bring a FileVault Mac back after a restart from your phone. A page behind Cloudflare
+Access takes the password in one field and unlocks the disk over SSH; a watcher alerts when the Mac is waiting.
+Installer for people and AI agents (`unlock/deploy.py`, `brew install penntiao/tap/smolder-unlock`). The app
+itself is unchanged.
+
 ## 0.3.3
 
 (0.3.2 was tagged but never released: one test still expected the old *This Mac* line.)

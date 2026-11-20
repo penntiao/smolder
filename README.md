@@ -88,6 +88,13 @@ of `--probe` (see below) helps.
 Check every destination from the terminal with `/Applications/Smolder.app/Contents/MacOS/Smolder --test-notify`.
 Payloads and recipes: [docs/integrations.md](docs/integrations.md).
 
+## After a restart: Smolder Unlock
+
+Smolder watches a Mac that is running. A Mac that restarted sits at the FileVault password screen, where nothing
+runs. [**Smolder Unlock**](unlock/README.md) is the companion that lives on a server of yours: one page behind your
+own login to type the password from your phone, and an alert when the Mac is waiting. It is a template with an
+installer that people and AI agents can both drive (`brew install penntiao/tap/smolder-unlock`).
+
 ## Install
 
 Requires an Apple Silicon Mac on macOS 14 Sonoma or later.
