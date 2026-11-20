@@ -82,7 +82,7 @@ the page.
 | `mac.lan_ip` | The Mac's address in your home network (reverse mode). Give it a fixed address on the router. |
 | `server.ssh` | How to reach the server from this Mac: `root@host`, or a user that can `sudo` without a password, or a `Host` from `~/.ssh/config`. |
 | `server.install_dir`, `server.listen_port` | Defaults `/opt/smolder-unlock` and `3112` (loopback only). |
-| `link.mode` | `"reverse"`: a home device keeps the tunnel; set `mac_port_on_server` / `device_port_on_server` if the defaults `39930` / `39931` are taken. `"direct"`: set `host` and `port` where the server reaches the Mac's SSH. |
+| `link.mode` | `"reverse"`: a home device keeps the tunnel; set `mac_port_on_server` / `device_port_on_server` if the defaults `39930` / `39931` are taken. If the device must dial something other than the host in `server.ssh` on port 22 (an alias there, another SSH port, a local proxy), set `server_host` / `server_port`. `"direct"`: set `host` and `port` where the server reaches the Mac's SSH; optionally `check: {"host", "port"}`, an SSH port that answers whenever the path home is up, so the page can tell "home is offline" from "the Mac does not answer". |
 | `cloudflare.zone`, `.hostname`, `.emails` | Your domain, the page's hostname under it, and who may log in. |
 | `notify.telegram.chat_id` | Where alerts go. The bot token comes from `TELEGRAM_BOT_TOKEN`. |
 | `notify.email` | Optional second channel: `{"host", "port", "user", "from", "to"}`, password from `SMTP_PASSWORD`. |
@@ -95,6 +95,8 @@ Create a custom token (My Profile → API Tokens) with:
 - Account · Access: Apps and Policies · Edit
 - Account · Access: Organizations, Identity Providers, and Groups · Edit
 - Zone · Zone · Read and Zone · DNS · Edit, limited to your zone
+
+Those five are enough; install and uninstall were run with exactly this token.
 
 The installer creates the Access application first, confirms it has exactly one owner-only policy, and only
 then publishes the hostname. Uninstall goes the other way round. The token is used from your Mac and is not
@@ -133,16 +135,18 @@ restarted and came back before an alert was due.
 ## Tested, and not
 
 Tested on a MacBook Air M4 (macOS 27.2, Wi-Fi only, lid closed with a dummy plug), a Debian 13 arm64 server,
-through a reverse tunnel: restarts unlocked from a phone after 4 and after 26 minutes at the password screen;
-the installer and uninstaller end to end in both link modes.
+through a reverse tunnel kept by an OpenWrt 25.12 router: restarts unlocked from a phone after 4 and after 26 minutes at
+the password screen; the installer and uninstaller end to end in both link modes, with a scoped API token; the
+OpenWrt init script on that router, including reconnecting after the tunnel was killed.
 
 - At the password screen the Mac's display sleeps after 5 minutes and the Mac itself after 20 idle minutes.
   It still wakes for each incoming connection, which is why the page retries up to four times.
 - macOS stops talking on the SSH connection once it has unlocked, without closing it. The server therefore
   confirms an unlock by looking at the Mac from the side; expect "Unlocked" a few seconds after you submit.
-- Not tested: a scoped API token (development used a global key; the permission list above is from Cloudflare's
-  documentation), the OpenWrt init script, Intel Macs, a wired-only Mac mini, an overnight wait at the password
-  screen, and recovery after a real power cut.
+- The real restarts above were done with the author's earlier private version of the same logic; this packaged
+  code has run the installer, the page and the checks, but not yet a real unlock.
+- Not tested: the systemd unit for a home device, Intel Macs, a wired-only Mac mini, an overnight wait at the
+  password screen, and recovery after a real power cut.
 
 ## Remove
 

@@ -69,7 +69,7 @@ smolder-unlock apply
 | `mac.lan_ip` | Mac 在家里内网的地址（反向通道模式用）。在路由器上给它固定下来。 |
 | `server.ssh` | 从这台 Mac 怎么登服务器：`root@主机`，或能免密 `sudo` 的用户，或 `~/.ssh/config` 里的一个 `Host`。 |
 | `server.install_dir`、`server.listen_port` | 默认 `/opt/smolder-unlock` 和 `3112`（只听回环）。 |
-| `link.mode` | `"reverse"`：家里设备挂通道；默认端口 `39930` / `39931` 被占了就改 `mac_port_on_server` / `device_port_on_server`。`"direct"`：填服务器能连到 Mac SSH 的 `host` 和 `port`。 |
+| `link.mode` | `"reverse"`：家里设备挂通道；默认端口 `39930` / `39931` 被占了就改 `mac_port_on_server` / `device_port_on_server`。设备要连的不是 `server.ssh` 里那个主机的 22 端口时（那里写的是别名、SSH 换了端口、要走本机代理口），填 `server_host` / `server_port`。`"direct"`：填服务器能连到 Mac SSH 的 `host` 和 `port`；可选 `check: {"host", "port"}`，一个只要回家的路通着就会应答的 SSH 端口，页面靠它分清「家里断线了」和「Mac 没有应答」。 |
 | `cloudflare.zone`、`.hostname`、`.emails` | 你的域名、页面用的子域名、谁可以登录。 |
 | `notify.telegram.chat_id` | 报警发给谁。机器人令牌从环境变量 `TELEGRAM_BOT_TOKEN` 读。 |
 | `notify.email` | 可选的第二条通道：`{"host", "port", "user", "from", "to"}`，密码从 `SMTP_PASSWORD` 读。 |
@@ -82,6 +82,8 @@ smolder-unlock apply
 - 账户 · Access：应用和策略 · 编辑
 - 账户 · Access：组织、身份提供程序和组 · 编辑
 - 区域 · 区域 · 读取，区域 · DNS · 编辑，限定到你的域名
+
+这五项就够，安装和卸载都是用恰好这样一个令牌跑过的。
 
 安装时先建 Access 应用，确认它恰好只有一条「只放行本人」的策略，然后才公开域名；卸载时顺序反过来。令牌只在你的 Mac 上用，不存到任何地方。
 
@@ -111,11 +113,12 @@ smolder-unlock apply
 
 ## 测过的和没测过的
 
-测过：MacBook Air M4（macOS 27.2，只有 Wi‑Fi，合盖插假显示器），Debian 13 arm64 服务器，走反向通道：重启后在密码界面停 4 分钟、26 分钟，都从手机解开了；安装和卸载两种通道模式各完整跑过一遍。
+测过：MacBook Air M4（macOS 27.2，只有 Wi‑Fi，合盖插假显示器），Debian 13 arm64 服务器，反向通道由一台 OpenWrt 25.12 路由器维持：重启后在密码界面停 4 分钟、26 分钟，都从手机解开了；安装和卸载两种通道模式各完整跑过一遍，用的是受限令牌；OpenWrt 启动脚本在那台路由器上跑过，包括通道被杀掉后自己重连。
 
 - 在开机密码界面，屏幕 5 分钟后熄，空闲 20 分钟后 Mac 自己睡着，但每来一个连接都会醒一下，所以页面会自动重试最多四次。
 - macOS 解开之后不在那条 SSH 连接上回话，也不关它。所以服务器是从旁边看 Mac 的状态来确认解锁的，提交后几秒才显示「已解锁」。
-- 没测过：受限的 API 令牌（开发时用的是全局密钥，上面的权限清单来自 Cloudflare 文档）、OpenWrt 启动脚本、Intel Mac、只接网线的 Mac mini、在密码界面过夜、真实停电后的恢复。
+- 上面那几次真重启用的是作者早先的自用版，逻辑相同；这份打包后的代码跑过安装、页面和各项检查，还没做过一次真解锁。
+- 没测过：家里设备用的 systemd 单元、Intel Mac、只接网线的 Mac mini、在密码界面过夜、真实停电后的恢复。
 
 ## 卸载
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Smolder Unlock 0.1.1
+
+- `link.server_host` / `link.server_port`: what the home device dials, when it is not port 22 of the host in
+  `server.ssh`. `link.check` in direct mode: an SSH port that proves the path home is up.
+- `uninstall` ends the tunnel user's sessions first, so the user is really removed.
+- Verified with a scoped API token (the five permissions in the README are enough) and on an OpenWrt router.
+
 ## Smolder Unlock 0.1.0
 
 New companion, in `unlock/`: bring a FileVault Mac back after a restart from your phone. A page behind Cloudflare

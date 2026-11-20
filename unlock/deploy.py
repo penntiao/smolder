@@ -100,7 +100,9 @@ def load_config(path):
         c["_mac_seen"] = {"host": "127.0.0.1", "port": link["mac_port_on_server"]}
         c["_check"] = {"host": "127.0.0.1", "port": link["device_port_on_server"]}
     elif link["mode"] == "direct":
-        c["_mac_seen"], c["_check"] = {"host": link["host"], "port": link.get("port", 22)}, None
+        # optional link.check {"host","port"}: an SSH port that answers whenever the path home is up (a router, a jump host),
+        # so the page can tell "home is offline" from "the Mac does not answer"
+        c["_mac_seen"], c["_check"] = {"host": link["host"], "port": link.get("port", 22)}, link.get("check")
     else:
         raise SystemExit("link.mode must be \"reverse\" or \"direct\"")
     return c
@@ -189,10 +191,11 @@ wc -l < /etc/ssh/smolder-link_authorized_keys"""
     if code != 0:
         return say("FAIL", f"link step on the server: {out or err}")
     say("OK", "server accepts the reverse tunnel for user smolder-link (two loopback ports, no shell)")
-    host = c["server"]["ssh"].split("@")[-1]
+    host = l.get("server_host") or c["server"]["ssh"].split("@")[-1]   # what the home device dials; set link.server_host if server.ssh is an alias
     out_dir = os.path.join(os.getcwd(), "home-device")
     os.makedirs(out_dir, exist_ok=True)
     cmd = (f"ssh -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new "
+           f"-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -p {l.get('server_port', 22)} "
            f"-i /etc/smolder-link/key -R 127.0.0.1:{l['mac_port_on_server']}:{c['mac']['lan_ip']}:22 "
            f"-R 127.0.0.1:{l['device_port_on_server']}:127.0.0.1:22 smolder-link@{host}")
     open(os.path.join(out_dir, "smolder-link.service"), "w").write(
@@ -427,7 +430,9 @@ def uninstall(c, r):
     code, out, err = r.run(f"""systemctl disable -q --now smolder-unlock.service smolder-unlock-tunnel.service 2>/dev/null
 rm -f /etc/systemd/system/smolder-unlock.service /etc/systemd/system/smolder-unlock-tunnel.service; systemctl daemon-reload
 rm -f /etc/ssh/sshd_config.d/70-smolder-link.conf /etc/ssh/smolder-link_authorized_keys; sshd -t && (systemctl reload ssh 2>/dev/null || systemctl reload sshd)
-userdel -r smolder-link 2>/dev/null; rm -rf {d}; userdel smolder-unlock 2>/dev/null; echo done""")
+pkill -u smolder-link 2>/dev/null; pkill -u smolder-unlock 2>/dev/null; sleep 1
+userdel -r smolder-link 2>/dev/null; rm -rf {d}; userdel smolder-unlock 2>/dev/null
+id smolder-link >/dev/null 2>&1 && echo "user smolder-link is still there" || echo done""")
     say("OK" if "done" in out else "FAIL", "server: services, files and both users removed" if "done" in out else err)
     path = os.path.expanduser("~/.ssh/authorized_keys")
     if os.path.exists(path):
